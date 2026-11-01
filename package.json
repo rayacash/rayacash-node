@@ -54,7 +54,7 @@
     "lint": "biome ci .",
     "format": "biome check --write .",
     "typecheck": "tsc -p tsconfig.json",
-    "check:package": "publint --strict && attw --pack . && node scripts/check-package.mjs",
+    "check:package": "node scripts/build.mjs && publint --strict && attw --pack . && node scripts/check-package.mjs",
     "version": "node scripts/sync-version.mjs && git add src/version.ts",
     "prepack": "node scripts/build.mjs"
   },

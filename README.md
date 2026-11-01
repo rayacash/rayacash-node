@@ -402,10 +402,12 @@ npm test                  # tests con node:test (nunca llaman a la API: usan un 
 npm run test:coverage     # lo mismo, con cobertura mínima del 95 %
 npm run lint && npm run typecheck
 npm run build             # dist/esm y dist/cjs
-npm run check:package     # publint, attw y el paquete cargado con import y con require
+npm run check:package     # build, publint, attw y el paquete cargado con import y con require
 ```
 
-Los ejemplos de [`examples/`](examples) importan `rayacash`: desde este repo, corré `npm run build` antes. Para publicar una versión, mirá [SDK.md](SDK.md).
+Los ejemplos de [`examples/`](examples) importan `rayacash`: desde este repo, corré `npm run build` antes.
+
+Para publicar una versión: subila con `npm version patch|minor|major --no-git-tag-version`, actualizá el CHANGELOG y creá un release `vX.Y.Z` en GitHub. El workflow `release.yml` corre los chequeos y publica en npm con Trusted Publishing.
 
 ---
 

@@ -1,7 +1,7 @@
 # Publica en npm al publicar un release de GitHub con tag vX.Y.Z.
 #
 # Usa Trusted Publishing (OIDC, sin tokens guardados). npm solo lo deja configurar en un paquete
-# que ya existe: la primera versión se publica a mano (ver SDK.md › Release). Después, en
+# que ya existe: la primera versión se publica a mano, con `npm publish`. Después, en
 # npmjs.com › rayacash › Settings › Trusted publishing: GitHub Actions, owner rayacash, repo
 # rayacash-node, workflow release.yml, environment npm, con «npm publish» permitido. Y en
 # GitHub › Settings › Environments, crear «npm».
