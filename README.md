@@ -11,8 +11,6 @@ const payment = await client.payments.create({ amount: 15000, description: "Pedi
 console.log(payment.bank_transfer.cvu, payment.checkout_url);
 ```
 
-> **No hay modo de prueba.** Cada request opera sobre tu cuenta real: crear un pago reserva un CVU hasta que vence y crear una transferencia mueve plata de verdad. Para probar tu integración sin tocar la API, usá un `fetch` falso (ver [Tests de tu integración](#tests-de-tu-integración)).
-
 Versión 1.0.1. Requiere Node.js 22 o más nuevo. Los cambios de cada versión están en [CHANGELOG.md](CHANGELOG.md).
 
 ## Contenido
@@ -332,7 +330,7 @@ app.post("/webhooks/raya", express.raw({ type: "application/json" }), (req, res)
 
 ## Tests de tu integración
 
-Como no hay modo de prueba, probá tu código con un `fetch` falso: no sale nada a la red.
+Para probar tu código sin llamar a la API, usá un `fetch` falso: no sale nada a la red.
 
 ```js
 import assert from "node:assert/strict";
