@@ -13,7 +13,7 @@ console.log(payment.bank_transfer.cvu, payment.checkout_url);
 
 > **No hay modo de prueba.** Cada request opera sobre tu cuenta real: crear un pago reserva un CVU hasta que vence y crear una transferencia mueve plata de verdad. Para probar tu integración sin tocar la API, usá un `fetch` falso (ver [Tests de tu integración](#tests-de-tu-integración)).
 
-Versión 1.0.0. Requiere Node.js 22 o más nuevo. Los cambios de cada versión están en [CHANGELOG.md](CHANGELOG.md).
+Versión 1.0.1. Requiere Node.js 22 o más nuevo. Los cambios de cada versión están en [CHANGELOG.md](CHANGELOG.md).
 
 ## Contenido
 
@@ -376,7 +376,7 @@ const dispatcher = new ProxyAgent("http://proxy.interno:3128");
 const client = new RayaClient({ fetch: (url, init) => fetch(url, { ...init, dispatcher }) });
 ```
 
-- **`appInfo`:** identifica tu plugin en el `User-Agent` (`rayacash-node/1.0.0 … mi-plugin/1.2.0`), que ves en [Developers › Logs](https://raya.cash/dashboard/developers/logs). En el estilo global: `setAppInfo("mi-plugin", { version: "1.2.0" })`.
+- **`appInfo`:** identifica tu plugin en el `User-Agent` (`rayacash-node/1.0.1 … mi-plugin/1.2.0`), que ves en [Developers › Logs](https://raya.cash/dashboard/developers/logs). En el estilo global: `setAppInfo("mi-plugin", { version: "1.2.0" })`.
 - **Logging:** con `RAYA_LOG=info` (o `config.log = "info"`) ves en stderr cada request, su status, su `request_id` y los reintentos; con `debug`, también la query y la idempotency key. Nunca logueamos la clave ni los bodies.
 - **Endpoints nuevos:** si la API suma un endpoint antes que el SDK, usá `client.rawRequest("get", "/v1/…", { params, body })`: tiene la misma autenticación, reintentos y errores.
 - **Estilo global:** `config.apiBase`, `config.timeout`, `config.maxNetworkRetries`, `config.fetch`, `config.log` y `setAppInfo()`.

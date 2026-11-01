@@ -2,6 +2,13 @@
 
 Los cambios de cada versión de `rayacash` publicada en [npm](https://www.npmjs.com/package/rayacash). Sigue [semver](https://semver.org/lang/es/): los cambios incompatibles solo llegan en una versión mayor (`2.0.0`), y los anotamos acá.
 
+## 1.0.1
+
+Sin cambios en el SDK: el código es el de la 1.0.0.
+
+- README: la sección «Desarrollo» ya no enlaza a una guía que no viene en el paquete y explica cómo publicar una versión.
+- Es la primera versión publicada desde GitHub Actions con Trusted Publishing, así que trae la provenance de npm.
+
 ## 1.0.0
 
 Primera versión, con el contrato y el comportamiento de `rayacash` 1.0.0 para Python.
