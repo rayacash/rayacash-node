@@ -118,7 +118,7 @@ export class UnprocessableEntityError extends RayaError {}
 /** 429: demasiadas requests. `retryAfter` dice cuántos segundos esperar. */
 export class RateLimitError extends RayaError {}
 
-/** 5xx o una respuesta inesperada: falló algo del lado de Raya. */
+/** 5xx, 408 o una respuesta inesperada: falló algo del lado de Raya. */
 export class APIError extends RayaError {}
 
 /** La firma de un webhook no es válida. */

@@ -11,7 +11,10 @@ export const DEFAULT_API_BASE = "https://api.raya.cash";
 export const DEFAULT_TIMEOUT = 65_000;
 export const DEFAULT_MAX_NETWORK_RETRIES = 2;
 
-/** La configuración del estilo global. Un `RayaClient` tiene la suya. */
+/**
+ * La configuración del estilo global. Un `RayaClient` tiene la suya, salvo el logging (`log` o
+ * `RAYA_LOG`), que vale para todo el proceso.
+ */
 export interface GlobalConfig {
   /** Tu clave secreta. Si no la asignás, se lee de la variable de entorno `RAYA_SECRET_KEY`. */
   apiKey: string | null | undefined;
@@ -19,7 +22,7 @@ export interface GlobalConfig {
   apiBase: string;
   /** Milisegundos por intento (por defecto, 65 000). */
   timeout: number;
-  /** Reintentos ante cortes, 5xx, 429 e `IDEMPOTENCY_KEY_IN_USE` (por defecto, 2). */
+  /** Reintentos ante cortes, 408, 429, 5xx e `IDEMPOTENCY_KEY_IN_USE` (por defecto, 2). */
   maxNetworkRetries: number;
   /** Un `fetch` propio (proxies, tests). Si no lo asignás, se usa el `fetch` global. */
   fetch: Fetch | null | undefined;

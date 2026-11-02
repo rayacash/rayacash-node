@@ -36,7 +36,10 @@ export class Transfer extends RayaObject {
   declare currency: string;
   declare counterparty: Transfer.Counterparty;
   declare description: string | null;
-  /** El identificador en la red de transferencias (`null` mientras está `pending`). */
+  /**
+   * El identificador en la red de transferencias. Es `null` mientras está `pending`, si falló y en
+   * las transferencias entre cuentas de Raya.
+   */
   declare reference: string | null;
   /** Fecha ISO 8601 en UTC, como `"2026-10-24T13:58:12Z"`. */
   declare created_at: string;

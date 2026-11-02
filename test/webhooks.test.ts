@@ -102,6 +102,20 @@ for (const [header, message] of INVALID_HEADERS) {
   });
 }
 
+test("el secreto y el header usan los espacios de Python, no los de trim()", () => {
+  const blank = thrown(() => verify(WEBHOOK_TEST_BODY, HEADER, "\x1c\x85"));
+  assert.ok(blank instanceof RangeError);
+  assert.match(blank.message, /Falta el secreto/);
+  timing.now = () => T;
+  assert.equal(
+    verify(WEBHOOK_TEST_BODY, `\x85t=${T},\x1cv1=${WEBHOOK_SIGNATURE}\x1f`, WEBHOOK_SECRET),
+    true,
+  );
+  // U+FEFF no es un espacio: el secreto "\ufeff" no está vacío (y la firma no coincide).
+  const feff = thrown(() => verify(WEBHOOK_TEST_BODY, HEADER, "\ufeff"));
+  assert.ok(feff instanceof SignatureVerificationError);
+});
+
 test("un body modificado", () => {
   const tampered = Buffer.from(
     WEBHOOK_TEST_BODY.toString().replace("webhook.test", "payment.succeeded"),
@@ -162,6 +176,25 @@ for (const [args, ErrorType] of PROGRAMMING_ERRORS) {
   });
 }
 
+// NaN apagaría el chequeo del reloj (la protección contra replays) sin avisar.
+for (const tolerance of [Number.NaN, -1, Number.NEGATIVE_INFINITY]) {
+  test(`tolerance ${tolerance} falla con el mismo mensaje que en Python y PHP`, () => {
+    for (const run of [
+      () => verify(WEBHOOK_TEST_BODY, HEADER, WEBHOOK_SECRET, tolerance),
+      () => Webhook.constructEvent(WEBHOOK_TEST_BODY, HEADER, WEBHOOK_SECRET, tolerance),
+    ]) {
+      const error = thrown(run);
+      assert.equal(error.constructor, RangeError);
+      assert.equal(error.message, "tolerance tiene que ser un número de segundos, 0 o más.");
+    }
+  });
+}
+
+test("tolerance Infinity vale: acepta cualquier t", () => {
+  timing.now = () => T + 10 ** 9;
+  assert.ok(verify(WEBHOOK_TEST_BODY, HEADER, WEBHOOK_SECRET, Number.POSITIVE_INFINITY));
+});
+
 test("constructEvent", () => {
   const body = Buffer.from(JSON.stringify(EVENT_PAYMENT_SUCCEEDED));
   const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
@@ -205,6 +238,40 @@ for (const body of ["[1, 2]", "no es json"]) {
     assert.match(error.message, /objeto JSON/);
   });
 }
+
+/** Los bytes de `before`, `middle` y `after`, en ese orden. */
+function bytes(before: string, middle: number[], after: string): Uint8Array {
+  const encoder = new TextEncoder();
+  return new Uint8Array([...encoder.encode(before), ...middle, ...encoder.encode(after)]);
+}
+
+// Lo que no es UTF-8 válido no es un objeto JSON, como en Python y PHP: Buffer.toString lo leía
+// con U+FFFD en lugar de los bytes inválidos. Un BOM tampoco pasa, como hasta ahora.
+const NOT_UTF8: Array<[string, Uint8Array]> = [
+  ["un byte inválido", bytes('{"id":"evt_', [0xff], '","object":"event"}')],
+  ["un surrogate codificado", bytes('{"id":"evt_', [0xed, 0xa0, 0x80], '","object":"event"}')],
+  ["un BOM", bytes("", [0xef, 0xbb, 0xbf], '{"id":"evt_x","object":"event"}')],
+];
+
+for (const [label, body] of NOT_UTF8) {
+  test(`constructEvent rechaza un body con ${label}`, () => {
+    const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+    const error = thrown(() => Webhook.constructEvent(body, header, WEBHOOK_SECRET));
+    assert.ok(error instanceof RangeError);
+    assert.equal(error.message, "El body del webhook no es un objeto JSON.");
+  });
+}
+
+test("constructEvent con un JSON muy anidado: el mismo error que un JSON inválido", () => {
+  // JSON.parse lo lee, pero armar el evento desbordaba la pila con un RangeError sin mensaje propio.
+  const deep = 100_000;
+  const body = `{"id":"evt_x","object":"event","data":${"[".repeat(deep)}${"]".repeat(deep)}}`;
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const error = thrown(() => Webhook.constructEvent(body, header, WEBHOOK_SECRET));
+  assert.ok(error instanceof RangeError);
+  assert.equal(error.message, "El body del webhook no es un objeto JSON.");
+  assert.ok(error.cause instanceof RangeError);
+});
 
 test("generateHeader con un timestamp explícito", () => {
   assert.equal(

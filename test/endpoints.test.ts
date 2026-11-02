@@ -159,6 +159,24 @@ test("los ids se codifican y nunca van vacíos", async () => {
   assert.equal(api.requests.length, 1);
 });
 
+test("un id «.» o «..» falla sin mandar nada", async () => {
+  const api = new MockAPI();
+  const client = api.client();
+  const calls: Array<[() => Promise<unknown>, string]> = [
+    [() => client.transfers.retrieve("."), "transferId"],
+    [() => client.transfers.retrieve(".."), "transferId"],
+    [() => client.payments.retrieve("."), "paymentId"],
+    [() => client.payments.retrieve(".."), "paymentId"],
+    [() => client.payments.refund(".."), "paymentId"],
+  ];
+  for (const [call, name] of calls) {
+    const error = await rejection(call());
+    assert.ok(error instanceof RangeError);
+    assert.equal(error.message, `${name} no puede ser "." ni "..".`);
+  }
+  assert.deepEqual(api.requests, []);
+});
+
 test("transfers.list", async () => {
   const api = new MockAPI();
   api.add(200, TRANSFER_LIST);
@@ -219,6 +237,28 @@ test("payments.create", async () => {
   });
   // Sin clave propia, generamos un UUID v4 para esta llamada.
   assert.match(request.headers.get("idempotency-key") ?? "", UUID_V4);
+});
+
+test("sin clave propia, cada llamada genera la suya", async () => {
+  const api = new MockAPI();
+  const client = api.client();
+  api.add(201, PAYMENT_PENDING);
+  api.add(201, PAYMENT_PENDING);
+  api.add(200, PAYMENT_REFUNDED);
+  api.add(200, PAYMENT_REFUNDED);
+  const results = [
+    await client.payments.create({ amount: 15000 }),
+    await client.payments.create({ amount: 15000 }),
+    await client.payments.refund(PAYMENT_ID),
+    await client.payments.refund(PAYMENT_ID),
+  ];
+  const keys = api.requests.map((request) => request.headers.get("idempotency-key") ?? "");
+  for (const key of keys) assert.match(key, UUID_V4);
+  assert.equal(new Set(keys).size, 4);
+  assert.deepEqual(
+    results.map((payment) => payment.lastResponse?.idempotencyKey),
+    keys,
+  );
 });
 
 test("payments.create manda solo lo que pasás", async () => {

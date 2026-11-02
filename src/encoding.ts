@@ -33,6 +33,20 @@ const NON_FINITE = /^[+-]?(?:inf|infinity|s?nan)$/i;
 // Ningún monto real se acerca: corta antes de armar un string gigante con "1e999999".
 const MAX_DIGITS = 1000;
 
+// Los espacios de str.strip() de Python (str.isspace()), los mismos que Text::strip() en PHP:
+// trim() también saca U+FEFF y no saca U+001C a U+001F ni U+0085.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: TAB a CR y U+001C a U+001F son espacios.
+const SPACE = /[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
+
+/** Sin los espacios de los bordes: los mismos que saca `str.strip()` de Python, no `trim()`. */
+export function strip(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && SPACE.test(text.charAt(start))) start += 1;
+  while (end > start && SPACE.test(text.charAt(end - 1))) end -= 1;
+  return text.slice(start, end);
+}
+
 /** Un objeto literal (`{…}` o `JSON.parse`), de este realm o de otro. */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null) return false;
@@ -118,10 +132,10 @@ export function canonicalAmount(value: unknown, name = "amount"): RawNumber {
     return decimalFromText(String(value), value, name);
   }
   if (typeof value === "bigint") return new RawNumber(value.toString());
-  if (typeof value === "string") return decimalFromText(value.trim(), value, name);
+  if (typeof value === "string") return decimalFromText(strip(value), value, name);
   if (isDecimalLike(value)) {
     const text: unknown = value.toFixed();
-    if (typeof text === "string") return decimalFromText(text.trim(), text, name);
+    if (typeof text === "string") return decimalFromText(strip(text), text, name);
   }
   throw new TypeError(
     `${name} tiene que ser un número en pesos (number, string decimal, bigint o un decimal como el ` +
@@ -213,12 +227,15 @@ export function encodeQuery(params: Record<string, unknown>): Record<string, str
   return query;
 }
 
-/** Un id para la ruta, codificado: nunca deja una barra final ni un segmento vacío. */
+/** Un id para la ruta, codificado: nunca deja una barra final, un segmento vacío ni «.» o «..». */
 export function pathId(name: string, value: unknown): string {
   if (typeof value !== "string") {
     throw new TypeError(`${name} tiene que ser un string, no ${typeName(value)}.`);
   }
-  if (!value.trim()) throw new RangeError(`${name} no puede estar vacío.`);
+  if (!strip(value)) throw new RangeError(`${name} no puede estar vacío.`);
+  // encodeURIComponent deja los puntos, y fetch resuelve los segmentos «.» y «..»: retrieve(".")
+  // pediría /v1/transfers/ y refund(".."), POST /v1/refund.
+  if (value === "." || value === "..") throw new RangeError(`${name} no puede ser "." ni "..".`);
   // Como quote(safe="") de Python: solo quedan sin codificar las letras, los dígitos y -_.~
   return encodeURIComponent(value).replace(
     /[!'()*]/g,

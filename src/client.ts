@@ -35,7 +35,7 @@ export interface RayaClientOptions {
    */
   timeout?: number;
   /**
-   * Reintentos ante cortes, 5xx, 429 e `IDEMPOTENCY_KEY_IN_USE` (por defecto, 2). Los POST
+   * Reintentos ante cortes, 408, 429, 5xx e `IDEMPOTENCY_KEY_IN_USE` (por defecto, 2). Los POST
    * reintentan con la misma Idempotency-Key, así que nunca se ejecutan dos veces.
    */
   maxNetworkRetries?: number;
@@ -197,7 +197,7 @@ export class RayaClient {
    * Una request a cualquier ruta, con la misma autenticación, reintentos y errores.
    *
    * Para endpoints que el SDK todavía no tiene: `client.rawRequest("get", "/v1/…", { params })`.
-   * `params` va en la query y `body` en el JSON del POST.
+   * `params` va en la query (la ruta va sin `?` ni `#`) y `body` en el JSON del POST.
    */
   async rawRequest(
     method: string,

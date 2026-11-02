@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { encodeBody, isPlainObject, typeName, validateIdempotencyKey } from "./encoding.ts";
+import { encodeBody, isPlainObject, strip, typeName, validateIdempotencyKey } from "./encoding.ts";
 import {
   APIConnectionError,
   APIError,
@@ -18,12 +18,20 @@ import { hydrate, type RayaObject } from "./rayaObject.ts";
 import { validateOptions } from "./requestOptions.ts";
 import { RayaResponse } from "./response.ts";
 import { backoffDelay, retryDelay, shouldRetryResponse, timing } from "./retry.ts";
-import { logDebug, logInfo } from "./util.ts";
+import { formatFixed, logDebug, logInfo } from "./util.ts";
 
-/** Un `fetch` como el global: el SDK solo usa `status`, `headers` y `text()` de la respuesta. */
+/**
+ * Un `fetch` como el global: el SDK solo usa `status`, `headers` y `arrayBuffer()` de la
+ * respuesta.
+ */
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// Como el response.text de httpx: lo que no es UTF-8 válido queda como U+FFFD y un BOM se queda
+// (así no es JSON, como en Python y PHP). Solo para los errores.
+const UTF8 = new TextDecoder("utf-8", { ignoreBOM: true });
+// UTF-8 estricto en los 2xx, como Python y PHP: lo que no es UTF-8 válido no es un objeto JSON.
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 // AbortSignal.timeout usa setTimeout, que con más que esto dispara enseguida.
 const MAX_TIMEOUT = 2_147_483_647;
 const TIMEOUT_CODES = new Set([
@@ -38,7 +46,7 @@ export function checkApiKey(key: unknown): string {
   if (typeof key !== "string") {
     throw new TypeError(`La clave secreta tiene que ser un string, no ${typeName(key)}.`);
   }
-  if (!key.trim()) {
+  if (!strip(key)) {
     throw new AuthenticationError(
       "Falta la clave secreta: pasala a new RayaClient({ apiKey }), asignala a config.apiKey o " +
         "definí la variable de entorno RAYA_SECRET_KEY.",
@@ -66,7 +74,7 @@ export function normalizeApiBase(value: unknown): string {
   if (typeof value !== "string") {
     throw new TypeError(`apiBase tiene que ser un string, no ${typeName(value)}.`);
   }
-  const url = value.trim();
+  const url = strip(value);
   let parts: URL | null = null;
   try {
     parts = new URL(url);
@@ -88,7 +96,10 @@ export function normalizeApiBase(value: unknown): string {
         "desarrollo local).",
     );
   }
-  return url.replace(/\/+$/, "");
+  // Una query o un fragmento vacíos ("https://x?") cuentan como ausentes, y sus marcas tampoco
+  // quedan: si no, cada request iría a /?/v1/… o a /.
+  const end = url.search(/[?#]/);
+  return (end < 0 ? url : url.slice(0, end)).replace(/\/+$/, "");
 }
 
 export function validateTimeout(value: unknown): number {
@@ -193,8 +204,8 @@ export class APIRequestor {
     expected?: string,
   ): Promise<RayaObject> {
     const prepared = this.#prepare(method, path, parts, options);
-    const { response, text } = await this.#send(prepared);
-    return this.#hydrate(prepared, response, text, expected);
+    const { response, bytes } = await this.#send(prepared);
+    return this.#hydrate(prepared, response, bytes, expected);
   }
 
   async requestList(
@@ -204,9 +215,15 @@ export class APIRequestor {
   ): Promise<ListObject<unknown>> {
     const page = await this.request("GET", path, { query }, options, "list");
     if (!(page instanceof ListObject)) {
+      // Con la respuesta, como todo error que sale de una respuesta de la API.
+      const response = page.lastResponse;
       throw new APIError("La API respondió algo que no es una lista.", {
         code: "INVALID_RESPONSE",
-        httpStatus: page.lastResponse?.httpStatus ?? null,
+        httpStatus: response?.httpStatus ?? null,
+        requestId: response?.requestId ?? null,
+        headers: response?.headers ?? null,
+        httpBody: response?.body ?? null,
+        idempotencyKey: response?.idempotencyKey ?? null,
       });
     }
     setRetrieveContext(page, path, query, validateOptions(options));
@@ -224,6 +241,15 @@ export class APIRequestor {
     if (verb !== "GET" && verb !== "POST") throw new RangeError("La API solo acepta GET y POST.");
     if (typeof path !== "string" || !path.startsWith("/")) {
       throw new RangeError("La ruta tiene que empezar con /, como /v1/balance.");
+    }
+    // La query va aparte: pegada a la ruta, la página siguiente le sumaría ?cursor a su último
+    // valor.
+    if (/[?#]/.test(path)) throw new RangeError("La ruta va sin query (usá params).");
+    // Como en Python y PHP: el parser de URL de fetch convertiría \ en / y sacaría los saltos y
+    // los tabs, y la request iría a otra ruta sin avisar.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: los caracteres de control se rechazan.
+    if (/[\\\x00-\x1f\x7f]/.test(path)) {
+      throw new RangeError("La ruta va sin \\ ni caracteres de control (codificá los ids).");
     }
 
     // Sin clave levanta API_KEY_MISSING antes de cualquier I/O.
@@ -270,7 +296,9 @@ export class APIRequestor {
     return {
       method: verb,
       path,
-      url: this.#config.apiBase() + path + (search ? `?${search}` : ""),
+      // fetch saca los espacios del final de la URL: sin query, "/v1/x " iría a /v1/x y su página
+      // siguiente, a /v1/x%20. Van codificados en todas, como en httpx.
+      url: this.#config.apiBase() + path.replaceAll(" ", "%20") + (search ? `?${search}` : ""),
       query,
       headers,
       body,
@@ -282,14 +310,14 @@ export class APIRequestor {
 
   // --- Envío con reintentos -----------------------------------------------------------------
 
-  async #send(p: Prepared): Promise<{ response: Response; text: string }> {
+  async #send(p: Prepared): Promise<{ response: Response; bytes: ArrayBuffer }> {
     const fetchImpl = this.#config.fetch();
     let retry = 0;
     for (;;) {
       logRequest(p, retry);
       const started = performance.now();
       let response: Response;
-      let text: string;
+      let bytes: ArrayBuffer;
       try {
         response = await fetchImpl(p.url, {
           method: p.method,
@@ -299,7 +327,7 @@ export class APIRequestor {
           signal: timing.timeoutSignal(Math.ceil(p.timeout)),
         });
         // El body se lee acá adentro: un corte a mitad de la respuesta también es un corte.
-        text = await response.text();
+        bytes = await response.arrayBuffer();
       } catch (cause) {
         const error = connectionError(p, cause);
         if (!error.shouldRetry || retry >= p.maxRetries) throw error;
@@ -309,8 +337,8 @@ export class APIRequestor {
         await timing.sleep(delay);
         continue;
       }
-      const outcome = check(p, response, text, started);
-      if (outcome === null) return { response, text };
+      const outcome = check(p, response, bytes, started);
+      if (outcome === null) return { response, bytes };
       if (retry >= p.maxRetries || !shouldRetry(outcome)) throw outcome;
       retry += 1;
       const delay = retryDelay(retry, outcome.retryAfter);
@@ -324,28 +352,28 @@ export class APIRequestor {
   #hydrate(
     p: Prepared,
     response: Response,
-    text: string,
+    bytes: ArrayBuffer,
     expected: string | undefined,
   ): RayaObject {
+    let text: string | null = null;
     let data: unknown = null;
     try {
+      text = STRICT_UTF8.decode(bytes);
       data = JSON.parse(text);
     } catch {
       data = null;
     }
-    if (!isPlainObject(data)) {
-      throw new APIError(
-        `La API respondió ${response.status} con un body que no es un objeto JSON.`,
-        {
-          code: "INVALID_RESPONSE",
-          httpStatus: response.status,
-          requestId: response.headers.get("raya-request-id"),
-          headers: response.headers,
-          httpBody: text,
-          idempotencyKey: p.idempotencyKey,
-        },
-      );
-    }
+    const invalid = (cause?: unknown): APIError =>
+      new APIError(`La API respondió ${response.status} con un body que no es un objeto JSON.`, {
+        code: "INVALID_RESPONSE",
+        httpStatus: response.status,
+        requestId: response.headers.get("raya-request-id"),
+        headers: response.headers,
+        httpBody: text ?? UTF8.decode(bytes),
+        idempotencyKey: p.idempotencyKey,
+        cause,
+      });
+    if (text === null || !isPlainObject(data)) throw invalid();
     const lastResponse = new RayaResponse({
       httpStatus: response.status,
       headers: response.headers,
@@ -353,7 +381,14 @@ export class APIRequestor {
       data,
       idempotencyKey: p.idempotencyKey,
     });
-    return hydrate(data, this, expected, lastResponse);
+    try {
+      return hydrate(data, this, expected, lastResponse);
+    } catch (cause) {
+      // JSON.parse lee cualquier profundidad, pero armar el objeto convierte cada nivel con una
+      // llamada: uno muy anidado llena la pila (RangeError). Como en Python y PHP, no es un objeto.
+      if (!(cause instanceof RangeError)) throw cause;
+      throw invalid(cause);
+    }
   }
 }
 
@@ -362,19 +397,24 @@ function shouldRetry(error: RayaError): boolean {
 }
 
 /** `null` si salió bien (2xx); si no, el error que corresponde. */
-function check(p: Prepared, response: Response, text: string, started: number): RayaError | null {
+function check(
+  p: Prepared,
+  response: Response,
+  bytes: ArrayBuffer,
+  started: number,
+): RayaError | null {
   logInfo("Respuesta de la API de Raya", {
     method: p.method,
     path: p.path,
     status: response.status,
     request_id: response.headers.get("raya-request-id") ?? "",
-    elapsed: `${((performance.now() - started) / 1000).toFixed(3)}s`,
+    elapsed: `${formatFixed((performance.now() - started) / 1000, 3)}s`,
   });
   if (response.status >= 200 && response.status < 300) return null;
   return errorFromResponse({
     httpStatus: response.status,
     headers: response.headers,
-    body: text,
+    body: UTF8.decode(bytes),
     idempotencyKey: p.idempotencyKey,
   });
 }
@@ -428,6 +468,6 @@ function logRetry(p: Prepared, retry: number, reason: string | null, delay: numb
     path: p.path,
     retry,
     reason: reason ?? "",
-    delay: `${delay.toFixed(2)}s`,
+    delay: `${formatFixed(delay, 2)}s`,
   });
 }

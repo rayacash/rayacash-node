@@ -18,7 +18,8 @@ import {
   type RayaError,
   UnprocessableEntityError,
 } from "../src/index.ts";
-import { logSettings } from "../src/util.ts";
+import { timing } from "../src/retry.ts";
+import { formatFixed, logInfo, logSettings } from "../src/util.ts";
 import {
   BALANCE,
   PAYMENT_ID,
@@ -230,6 +231,10 @@ for (const body of ["no es json", "[1, 2]", ""]) {
     assert.ok(error instanceof APIError);
     assert.equal(error.code, "INVALID_RESPONSE");
     assert.equal(error.httpStatus, 200);
+    assert.equal(error.requestId, "req_test00000000000000000001");
+    assert.equal(error.headers.get("raya-request-id"), "req_test00000000000000000001");
+    assert.equal(error.httpBody, body);
+    assert.equal(error.idempotencyKey, null);
     assert.equal(api.requests.length, 1);
   });
 }
@@ -249,7 +254,114 @@ test("un endpoint de lista que no devuelve una lista", async () => {
   const error = await rejection(api.client().transfers.list());
   assert.ok(error instanceof APIError);
   assert.match(error.message, /no es una lista/);
+  // Con la respuesta, como todo error que llega después de una respuesta.
+  assert.equal(error.code, "INVALID_RESPONSE");
+  assert.equal(error.httpStatus, 200);
+  assert.equal(error.requestId, "req_test00000000000000000001");
+  assert.equal(error.headers.get("raya-request-id"), "req_test00000000000000000001");
+  assert.equal(error.httpBody, JSON.stringify(BALANCE));
+  assert.equal(error.idempotencyKey, null);
 });
+
+// La API manda UTF-8 válido: un body que no lo es no es un objeto JSON, como en Python y PHP.
+const INVALID_UTF8 = new Uint8Array([
+  ...new TextEncoder().encode('{"object":"payment","description":"'),
+  0xff,
+  0xfe,
+  ...new TextEncoder().encode('"}'),
+]);
+
+test("un 2xx con UTF-8 inválido es INVALID_RESPONSE, con la respuesta", async () => {
+  const api = new MockAPI();
+  api.add(201, null, { text: INVALID_UTF8 });
+  const error = await rejection(
+    api.client().payments.create({ amount: 15000 }, { idempotencyKey: "pedido-1" }),
+  );
+  assert.ok(error instanceof APIError);
+  assert.equal(error.code, "INVALID_RESPONSE");
+  assert.equal(error.message, "La API respondió 201 con un body que no es un objeto JSON.");
+  assert.equal(error.httpStatus, 201);
+  assert.equal(error.requestId, "req_test00000000000000000001");
+  assert.equal(error.headers.get("raya-request-id"), "req_test00000000000000000001");
+  assert.equal(error.httpBody, '{"object":"payment","description":"\ufffd\ufffd"}');
+  assert.equal(error.idempotencyKey, "pedido-1");
+  assert.equal(api.requests.length, 1);
+});
+
+test("un error con UTF-8 inválido se lee igual, con reemplazos", async () => {
+  const api = new MockAPI();
+  const body = new Uint8Array([
+    ...new TextEncoder().encode('{"error":{"code":"PARAMETER_INVALID","message":"Mal '),
+    0xff,
+    ...new TextEncoder().encode('.","data":{"field":"amount"}}}'),
+  ]);
+  api.add(400, null, { text: body });
+  const error = await rejection(api.client().balance.retrieve());
+  assert.ok(error instanceof InvalidRequestError);
+  assert.equal(error.code, "PARAMETER_INVALID");
+  assert.equal(error.message, "Mal \ufffd.");
+  assert.equal(error.param, "amount");
+});
+
+test("un 2xx con el carácter de reemplazo en UTF-8 válido se acepta", async () => {
+  const api = new MockAPI();
+  api.add(200, { ...BALANCE, nota: "\ufffd" });
+  const balance = await api.client().balance.retrieve();
+  assert.equal(balance.nota, "\ufffd");
+});
+
+test("un error con BOM no se lee, como en Python y PHP: va el código de respaldo", async () => {
+  // TextDecoder sacaba el BOM y el JSON se leía; httpx y json_decode lo dejan, y no es JSON.
+  const api = new MockAPI();
+  const json = '{"error":{"code":"X","message":"m"}}';
+  api.add(500, null, {
+    text: new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(json)]),
+  });
+  const error = await rejection(api.client(TEST_KEY, { maxNetworkRetries: 0 }).balance.retrieve());
+  assert.ok(error instanceof APIError);
+  assert.equal(error.code, "INTERNAL_ERROR");
+  assert.equal(error.jsonBody, null);
+  assert.equal(error.httpBody, `\ufeff${json}`);
+});
+
+// Más niveles de los que la hidratación puede recorrer (convierte cada nivel con una llamada): el
+// JSON.parse de V8 los lee, pero armar el objeto desbordaba la pila con un RangeError que no es un
+// RayaError. Como en Python y PHP: INVALID_RESPONSE, con la respuesta.
+const DEEP = 100_000;
+const DEEP_BODIES: Array<[string, string]> = [
+  ["arrays", `{"object":"balance","available":${"[".repeat(DEEP)}${"]".repeat(DEEP)}}`],
+  ["objetos", `{"object":"balance","extra":${'{"a":'.repeat(DEEP)}1${"}".repeat(DEEP)}}`],
+  ["metadata", `{"object":"payment","metadata":${'{"a":'.repeat(DEEP)}1${"}".repeat(DEEP)}}`],
+];
+
+for (const [label, body] of DEEP_BODIES) {
+  test(`un 2xx con ${DEEP} niveles de ${label} es INVALID_RESPONSE, con la respuesta`, async () => {
+    const api = new MockAPI();
+    const client = api.client();
+    api.add(200, null, { text: body });
+    const error = await rejection(client.balance.retrieve());
+    assert.ok(error instanceof APIError);
+    assert.equal(error.code, "INVALID_RESPONSE");
+    assert.equal(error.message, "La API respondió 200 con un body que no es un objeto JSON.");
+    assert.equal(error.httpStatus, 200);
+    assert.equal(error.requestId, "req_test00000000000000000001");
+    assert.equal(error.headers.get("raya-request-id"), "req_test00000000000000000001");
+    assert.equal(error.httpBody, body);
+    assert.equal(error.idempotencyKey, null);
+    assert.ok(error.cause instanceof RangeError);
+
+    api.add(201, null, { text: body });
+    const post = await rejection(
+      client.payments.create({ amount: 15000 }, { idempotencyKey: "pedido-1" }),
+    );
+    assert.ok(post instanceof APIError);
+    assert.equal(post.code, "INVALID_RESPONSE");
+    assert.equal(post.httpStatus, 201);
+    assert.equal(post.requestId, "req_test00000000000000000002");
+    assert.equal(post.httpBody, body);
+    assert.equal(post.idempotencyKey, "pedido-1");
+  });
+}
 
 test("los logs info nunca incluyen la clave ni el body", async () => {
   const api = new MockAPI();
@@ -293,6 +405,93 @@ test("los logs debug incluyen la idempotency key y la query", async () => {
       err.includes("query=direction=inbound&limit=5"),
   );
   assert.ok(!err.includes(TEST_KEY));
+});
+
+test("logfmt escapa los valores: un valor nunca corta la línea ni inventa otra", async () => {
+  config.log = "info";
+  const err = await captureStderr(async () => {
+    logInfo("Mensaje", {
+      space: "a b",
+      newline: "a\nb",
+      cr: "\r",
+      tab: "\t",
+      esc: "\x1b[31m",
+      del: "\x7f",
+      quote: 'a"b',
+      backslash: "a\\b",
+      nul: "\x00",
+      empty: "",
+      equals: "a=b",
+      plain: "req_123",
+      unicode: "ñandú",
+    });
+  });
+  assert.equal(
+    err,
+    'message=Mensaje space="a b" newline="a\\nb" cr="\\r" tab="\\t" esc="\\u001b[31m" ' +
+      'del="\\u007f" quote="a\\"b" backslash="a\\\\b" nul="\\u0000" empty="" equals="a=b" ' +
+      "plain=req_123 unicode=ñandú\n",
+  );
+});
+
+test(`un error con ${DEEP} niveles en data es un RayaError, con su body`, async () => {
+  // El body de un error no se hidrata: JSON.parse lo lee y nada lo recorre. Python y PHP, que no
+  // pueden leerlo, usan el código de respaldo; en ningún caso sale un RangeError.
+  const api = new MockAPI();
+  const body = `{"error":{"code":"X","message":"m","data":${"[".repeat(DEEP)}${"]".repeat(DEEP)}}}`;
+  api.add(500, null, { text: body });
+  const error = await rejection(api.client(TEST_KEY, { maxNetworkRetries: 0 }).balance.retrieve());
+  assert.ok(error instanceof APIError);
+  assert.equal(error.httpStatus, 500);
+  assert.equal(error.requestId, "req_test00000000000000000001");
+  assert.equal(error.httpBody, body);
+});
+
+test("el delay de los logs lleva los empates al par, como Python y PHP", async () => {
+  // Con jitter 0,25: 0,25 + 0,25 · 0,25 = 0,3125 y 0,5 + 0,5 · 0,25 = 0,625, un empate exacto
+  // que toFixed sube (0.63) y f"{:.2f}" y sprintf("%.2F") llevan al par (0.62).
+  const api = new MockAPI();
+  config.log = "info";
+  timing.jitter = () => 0.25;
+  api.addError(500, "INTERNAL_ERROR");
+  api.addError(500, "INTERNAL_ERROR");
+  api.add(200, BALANCE);
+  const err = await captureStderr(() => api.client().balance.retrieve());
+  assert.ok(err.includes("retry=1 reason=INTERNAL_ERROR delay=0.31s\n"));
+  assert.ok(err.includes("retry=2 reason=INTERNAL_ERROR delay=0.62s\n"));
+});
+
+test("formatFixed lleva los empates exactos al par y deja el resto como toFixed", () => {
+  const cases: Array<[number, number, string]> = [
+    [0.125, 2, "0.12"],
+    [0.375, 2, "0.38"],
+    [0.625, 2, "0.62"],
+    [0.875, 2, "0.88"],
+    [7.125, 2, "7.12"],
+    [0.0625, 3, "0.062"],
+    [0.1875, 3, "0.188"],
+    [0.3125, 3, "0.312"],
+    [2.675, 2, "2.67"], // no es un empate: el double queda debajo de 2,675
+    [1.005, 2, "1.00"],
+    [0.5, 2, "0.50"],
+    [8, 2, "8.00"],
+    [0, 3, "0.000"],
+    [12.3456, 3, "12.346"],
+  ];
+  for (const [value, digits, expected] of cases) {
+    assert.equal(formatFixed(value, digits), expected, `${value} con ${digits}`);
+  }
+});
+
+test("un cursor con un salto de línea no inventa una línea de log", async () => {
+  const api = new MockAPI();
+  logSettings.env = "debug";
+  api.add(200, { object: "list", data: [], has_more: false, next_cursor: null });
+  const err = await captureStderr(() =>
+    api.client().transfers.list({ cursor: "c1\nmessage=Falso status=200" }),
+  );
+  assert.ok(err.includes('query="cursor=c1\\nmessage=Falso status=200"'));
+  assert.equal(err.split("\n").length, 4); // tres líneas y el salto final
 });
 
 test("el logging es silencioso por defecto", async () => {

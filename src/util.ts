@@ -1,7 +1,7 @@
 // Logging (RAYA_LOG), User-Agent, appInfo y enmascarado de la clave.
 
 import { config } from "./config.ts";
-import { isPlainObject, typeName } from "./encoding.ts";
+import { isPlainObject, strip, typeName } from "./encoding.ts";
 import { VERSION } from "./version.ts";
 
 /** Identifica tu integración o plugin en el User-Agent (lo ves en Developers › Logs). */
@@ -22,16 +22,52 @@ function consoleLevel(): "debug" | "info" | null {
   return level === "debug" || level === "info" ? level : null;
 }
 
+// Un valor va entre comillas si está vacío o tiene espacios, =, comillas, barras o caracteres de
+// control, y adentro se escapan las comillas, las barras y los de control: así, un valor nunca
+// corta la línea ni inventa otra. Las líneas salen iguales que en Python y PHP.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: los caracteres de control se escapan.
+const NEEDS_QUOTES = /[ ="\\\x00-\x1f\x7f]/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: los caracteres de control se escapan.
+const TO_ESCAPE = /["\\\x00-\x1f\x7f]/g;
+const ESCAPES: Record<string, string> = {
+  "\\": "\\\\",
+  '"': '\\"',
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+};
+
 function logfmt(props: Record<string, unknown>): string {
   return Object.entries(props)
     .map(([key, value]) => {
       let text = String(value);
-      if (!text || /[ ="\\]/.test(text)) {
-        text = `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+      if (!text || NEEDS_QUOTES.test(text)) {
+        const escaped = text.replace(
+          TO_ESCAPE,
+          (char) => ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+        );
+        text = `"${escaped}"`;
       }
       return `${key}=${text}`;
     })
     .join(" ");
+}
+
+/**
+ * `value.toFixed(digits)` con los empates exactos al par, como `f"{value:.2f}"` en Python y
+ * `sprintf("%.2F")` en PHP: así las líneas de log salen iguales. toFixed los sube (0.625 da "0.63";
+ * Python y PHP, "0.62"). Para los números de los logs, que nunca son negativos.
+ */
+export function formatFixed(value: number, digits: number): string {
+  const text = value.toFixed(digits);
+  // Un empate exacto: value · 2^(digits + 1) es un entero impar (multiplicar por 2 no redondea).
+  // toFixed eligió el de arriba; si su última cifra es impar, el par es el de abajo, sin acarreo.
+  const scaled = value * 2 ** (digits + 1);
+  const last = Number(text.slice(-1));
+  if (Number.isInteger(scaled) && scaled % 2 === 1 && last % 2 === 1) {
+    return `${text.slice(0, -1)}${last - 1}`;
+  }
+  return text;
 }
 
 export function logDebug(message: string, params: Record<string, unknown>): void {
@@ -57,7 +93,7 @@ export function validateAppInfo(info: unknown): AppInfo {
     throw new RangeError(`appInfo no acepta "${unknown.sort()[0]}": usá name, version y url.`);
   }
   const name = info.name;
-  if (typeof name !== "string" || !name.trim()) throw new RangeError("appInfo necesita un name.");
+  if (typeof name !== "string" || !strip(name)) throw new RangeError("appInfo necesita un name.");
   const result: AppInfo = { name };
   for (const field of ["version", "url"] as const) {
     const value = info[field];

@@ -59,6 +59,9 @@ const INVALID_KEYS: Array<[string, string]> = [
   [`${TEST_KEY} `, "API_KEY_INVALID"],
   ["raya_sk_live_ñ", "API_KEY_INVALID"],
   [`${TEST_KEY}\n`, "API_KEY_INVALID"],
+  // Los espacios de str.strip() de Python, no los de trim(): U+001C y U+0085 sí, U+FEFF no.
+  ["\x1c\x85", "API_KEY_MISSING"],
+  ["\ufeff", "API_KEY_INVALID"],
 ];
 
 for (const [key, code] of INVALID_KEYS) {
@@ -126,14 +129,24 @@ const VALID_BASES: Array<[string, string]> = [
   ["http://localhost:8000", "http://localhost:8000"],
   ["http://127.0.0.1:8000/", "http://127.0.0.1:8000"],
   ["http://[::1]:8000", "http://[::1]:8000"],
+  // Una query o un fragmento vacíos cuentan como ausentes: sus marcas no quedan en la base.
+  ["https://api.raya.cash?", "https://api.raya.cash"],
+  ["https://api.raya.cash#", "https://api.raya.cash"],
+  ["https://api.raya.cash/?#", "https://api.raya.cash"],
+  ["https://proxy.example.com/raya/?", "https://proxy.example.com/raya"],
+  ["http://localhost:8000#", "http://localhost:8000"],
+  // Los espacios de los bordes son los de str.strip() de Python: también U+001C y U+0085.
+  ["\x85https://api.raya.cash/\x1c", "https://api.raya.cash"],
 ];
 
 for (const [base, expected] of VALID_BASES) {
-  test(`apiBase válida: ${base}`, async () => {
+  test(`apiBase válida: ${JSON.stringify(base)}`, async () => {
     const api = new MockAPI();
     api.add(200, BALANCE);
-    await api.client(TEST_KEY, { apiBase: base }).balance.retrieve();
+    const client = api.client(TEST_KEY, { apiBase: base });
+    await client.balance.retrieve();
     assert.equal(api.last.url.href, `${expected}/v1/balance`);
+    assert.equal(client.toJSON().apiBase, expected);
   });
 }
 
@@ -144,6 +157,9 @@ for (const base of [
   "https://",
   "https://x?y=1",
   "https://x#frag",
+  "https://x??",
+  "https://x?#y",
+  "https://x/#?",
   "https://u:p@x",
 ]) {
   test(`apiBase inválida: ${base}`, () => {
@@ -182,6 +198,12 @@ for (const [options, ErrorType] of INVALID_OPTIONS) {
     assert.equal(error.constructor, ErrorType);
   });
 }
+
+test("appInfo sin name: los espacios de Python, no los de trim()", () => {
+  const error = thrown(() => new RayaClient(TEST_KEY, { appInfo: { name: "\x1c\x85" } }));
+  assert.ok(error instanceof RangeError);
+  assert.equal(error.message, "appInfo necesita un name.");
+});
 
 test("la forma de los argumentos del constructor", () => {
   // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
@@ -261,6 +283,25 @@ test("las listas de rawRequest se pueden paginar", async () => {
   assert.equal(api.last.url.searchParams.get("limit"), "2");
 });
 
+test("rawRequest manda los espacios de la ruta codificados en todas las páginas", async () => {
+  // Como httpx: fetch sacaba el espacio del final en la primera página y no en la siguiente.
+  const api = new MockAPI();
+  const client = api.client();
+  api.add(200, TRANSFER_LIST);
+  const page = await client.rawRequest("get", "/v1/transfers ");
+  assert.ok(page instanceof ListObject);
+  assert.equal(api.last.url.pathname, "/v1/transfers%20");
+  api.add(200, { ...TRANSFER_LIST, has_more: false, next_cursor: null });
+  await page.nextPage();
+  assert.equal(api.last.url.pathname, "/v1/transfers%20");
+  assert.equal(api.last.url.searchParams.get("cursor"), TRANSFER_LIST.next_cursor);
+});
+
+// La query va en params: pegada a la ruta, la página siguiente le sumaría ?cursor a su valor.
+const NO_QUERY = /^La ruta va sin query \(usá params\)\.$/;
+// Como en Python y PHP: fetch convertía \ en / y sacaba los saltos y los tabs, sin avisar.
+const NO_CONTROLS = /^La ruta va sin \\ ni caracteres de control \(codificá los ids\)\.$/;
+
 const RAW_INVALID: Array<
   [string, string, Record<string, unknown>, Record<string, unknown>, RegExp]
 > = [
@@ -268,10 +309,20 @@ const RAW_INVALID: Array<
   ["get", "v1/balance", {}, {}, /empezar con \//],
   ["get", "/v1/balance", {}, { idempotencyKey: "x" }, /solo va en los POST/],
   ["get", "/v1/balance", { body: { a: 1 } }, {}, /Un GET no lleva body/],
+  ["get", "/v1/things?x=1", { params: { limit: 2 } }, {}, NO_QUERY],
+  ["get", "/v1/things?", {}, {}, NO_QUERY],
+  ["get", "/v1/things#x", {}, {}, NO_QUERY],
+  ["post", "/v1/things?x=1", { body: { a: 1 } }, {}, NO_QUERY],
+  ["get", "/v1/a\\b", {}, {}, NO_CONTROLS],
+  ["get", "/v1/a\tb", {}, {}, NO_CONTROLS],
+  ["get", "/v1/a\nb", {}, {}, NO_CONTROLS],
+  ["get", "/v1/a\rb", {}, {}, NO_CONTROLS],
+  ["get", "/v1/\x00", {}, {}, NO_CONTROLS],
+  ["post", "/v1/\x7f", { body: { a: 1 } }, {}, NO_CONTROLS],
 ];
 
 for (const [method, path, request, options, message] of RAW_INVALID) {
-  test(`rawRequest valida: ${method} ${path} ${JSON.stringify({ ...request, ...options })}`, async () => {
+  test(`rawRequest valida: ${method} ${JSON.stringify(path)} ${JSON.stringify({ ...request, ...options })}`, async () => {
     const error = await rejection(
       new MockAPI().client().rawRequest(method, path, request, options),
     );

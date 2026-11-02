@@ -8,6 +8,7 @@ import {
   encodeBody,
   encodeQuery,
   pathId,
+  strip,
   validateIdempotencyKey,
 } from "../src/encoding.ts";
 import { isolate, thrown } from "./helpers.ts";
@@ -72,6 +73,8 @@ const INVALID_AMOUNTS: Array<[unknown, typeof TypeError | typeof RangeError]> = 
   ["Infinity", RangeError],
   ["", RangeError],
   ["1e999999", RangeError],
+  ["1e-1001", RangeError],
+  ["1e-99999999999", RangeError],
 ];
 
 for (const [value, ErrorType] of INVALID_AMOUNTS) {
@@ -81,6 +84,15 @@ for (const [value, ErrorType] of INVALID_AMOUNTS) {
     assert.match(error.message, /amount/);
   });
 }
+
+test("el tope de 1000 dígitos deja pasar un exponente negativo dentro del tope", () => {
+  // Lo rechaza la API (más de 2 decimales), pero viaja exacto: el SDK nunca redondea.
+  assert.equal(dumps({ amount: canonicalAmount("1e-999") }), `{"amount":0.${"0".repeat(998)}1}`);
+  assert.equal(
+    dumps({ amount: canonicalAmount("-25e-999") }),
+    `{"amount":-0.${"0".repeat(997)}25}`,
+  );
+});
 
 test("dumps maneja cada tipo de JSON en ASCII, como json.dumps", () => {
   const value = {
@@ -180,6 +192,51 @@ for (const [value, ErrorType] of EMPTY_IDS) {
     assert.match(error.message, /paymentId/);
   });
 }
+
+// fetch resuelve los segmentos «.» y «..»: retrieve(".") pediría /v1/transfers/ y refund(".."),
+// POST /v1/refund.
+for (const value of [".", ".."]) {
+  test(`pathId rechaza ${JSON.stringify(value)}`, () => {
+    const error = thrown(() => pathId("paymentId", value));
+    assert.equal(error.constructor, RangeError);
+    assert.equal(error.message, 'paymentId no puede ser "." ni "..".');
+  });
+}
+
+test("pathId deja los puntos dentro de un id", () => {
+  assert.equal(pathId("paymentId", "..."), "...");
+  assert.equal(pathId("paymentId", ".a"), ".a");
+  assert.equal(pathId("paymentId", " ."), "%20.");
+});
+
+// Los espacios de str.strip() de Python (y de Text::strip() en PHP): también U+001C a U+001F y
+// U+0085, y no U+FEFF, al revés que String.prototype.trim().
+const PYTHON_SPACES =
+  "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005" +
+  "\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000";
+
+test("strip saca los mismos espacios que str.strip() de Python", () => {
+  assert.equal(strip(`${PYTHON_SPACES}a b${PYTHON_SPACES}`), "a b");
+  assert.equal(strip(PYTHON_SPACES), "");
+  for (const kept of ["\ufeff", "\u200b", "\u180e", "\x00", "\x7f"]) {
+    assert.equal(strip(`${kept}a${kept}`), `${kept}a${kept}`);
+  }
+});
+
+test("pathId y los montos usan los espacios de Python", () => {
+  for (const blank of ["\x1c", "\x1f", "\x85"]) {
+    assert.equal(
+      thrown(() => pathId("paymentId", blank)).message,
+      "paymentId no puede estar vacío.",
+    );
+    assert.equal(canonicalAmount(`${blank}5${blank}`).text, "5");
+  }
+  assert.equal(pathId("paymentId", "\ufeff"), "%EF%BB%BF");
+  const error = thrown(() => canonicalAmount("\ufeff5"));
+  assert.equal(error.constructor, RangeError);
+  assert.match(error.message, /no es un número/);
+  assert.equal(canonicalAmount(new FakeDecimal("\x1c1500.50\x85")).text, "1500.5");
+});
 
 for (const key of ["9b2f6c4e-1d3a-4e8b-a5c7-0f9e8d7c6b5a", "x", "~".repeat(255), "!#$%"]) {
   test(`la idempotency key ${key.slice(0, 20)} es válida`, () => {

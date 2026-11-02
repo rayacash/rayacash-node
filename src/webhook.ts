@@ -8,7 +8,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { isPlainObject, typeName } from "./encoding.ts";
+import { isPlainObject, strip, typeName } from "./encoding.ts";
 import { SignatureVerificationError } from "./errors.ts";
 import { Event } from "./event.ts";
 import { construct } from "./rayaObject.ts";
@@ -21,6 +21,9 @@ export const DEFAULT_TOLERANCE = 300;
 /** El body crudo del webhook, tal como llegó. */
 export type Payload = string | Uint8Array | ArrayBuffer;
 
+// UTF-8 estricto, como Python y PHP: Buffer.toString leería lo inválido como U+FFFD. Con
+// ignoreBOM, un BOM queda en el texto y JSON.parse lo rechaza, como siempre.
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const TIMESTAMP = /^[0-9]{1,20}$/;
 const SIGNATURE = /^[0-9a-fA-F]{64}$/;
 
@@ -41,7 +44,7 @@ function checkSecret(secret: unknown): string {
   if (typeof secret !== "string") {
     throw new TypeError("secret tiene que ser el secreto del destino (whsec_…), un string.");
   }
-  if (!secret.trim()) {
+  if (!strip(secret)) {
     throw new RangeError("Falta el secreto del webhook (whsec_…): está en Developers › Webhooks.");
   }
   return secret;
@@ -70,11 +73,11 @@ function parseHeader(header: string): { timestamp: bigint | null; signatures: st
   let timestamp: bigint | null = null;
   const signatures: string[] = [];
   for (const part of header.split(",")) {
-    const trimmed = part.trim();
+    const trimmed = strip(part);
     const sep = trimmed.indexOf("=");
     if (sep < 0) continue;
-    const key = trimmed.slice(0, sep).trim();
-    const value = trimmed.slice(sep + 1).trim();
+    const key = strip(trimmed.slice(0, sep));
+    const value = strip(trimmed.slice(sep + 1));
     if (key === "t" && timestamp === null && TIMESTAMP.test(value)) {
       // BigInt, como el int() de Python: exacto y sin los ceros de adelante.
       timestamp = BigInt(value);
@@ -123,7 +126,7 @@ export class WebhookSignature {
       throw new TypeError("header tiene que ser el valor del header Raya-Signature, un string.");
     }
     const sigHeader = header ?? null;
-    if (sigHeader === null || !sigHeader.trim()) {
+    if (sigHeader === null || !strip(sigHeader)) {
       throw new SignatureVerificationError("Falta el header Raya-Signature.", sigHeader, body);
     }
     const { timestamp, signatures } = parseHeader(sigHeader);
@@ -198,12 +201,19 @@ export function constructEvent(
   WebhookSignature.verifyHeader(payload, header, secret, tolerance);
   let data: unknown;
   try {
-    data = JSON.parse(payloadBytes(payload).toString("utf8"));
+    data = JSON.parse(STRICT_UTF8.decode(payloadBytes(payload)));
   } catch (cause) {
     throw new RangeError("El body del webhook no es un objeto JSON.", { cause });
   }
   if (!isPlainObject(data)) throw new RangeError("El body del webhook no es un objeto JSON.");
-  return construct(Event, data, requestor, null);
+  try {
+    return construct(Event, data, requestor, null);
+  } catch (cause) {
+    // Armar el evento convierte cada nivel con una llamada: uno muy anidado llena la pila
+    // (RangeError). Es el mismo error que un JSON inválido, como en Python y PHP.
+    if (!(cause instanceof RangeError)) throw cause;
+    throw new RangeError("El body del webhook no es un objeto JSON.", { cause });
+  }
 }
 
 // biome-ignore lint/complexity/noStaticOnlyClass: la API es la de stripe (Webhook.constructEvent).

@@ -10,6 +10,8 @@
 // - 503 API_UNAVAILABLE es un interruptor (mantenimiento): no se reintenta.
 // - Cualquier otro 4xx: no se hizo nada; reintentar igual da lo mismo.
 
+import { strip } from "./encoding.ts";
+
 export const INITIAL_DELAY = 0.5;
 export const MAX_DELAY = 8;
 export const MAX_RETRY_AFTER = 60;
@@ -30,8 +32,10 @@ export const timing = {
 };
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-// La fecha HTTP de RFC 9110 (IMF-fixdate), con el día de la semana opcional y sin zona = UTC, como
-// email.utils.parsedate_to_datetime. Nunca Date.parse: acepta casi cualquier cosa ("1.5" es una fecha).
+// La fecha HTTP de RFC 9110 (IMF-fixdate), también sin el día de la semana, sin los segundos o sin
+// zona (= UTC) y con una zona numérica, como en PHP. Python (email.utils.parsedate_to_datetime)
+// acepta además RFC 850, asctime y zonas como EST. Nunca Date.parse: acepta casi cualquier cosa
+// ("1.5" es una fecha).
 const HTTP_DATE =
   /^(?:[a-z]{3},\s*)?(\d{1,2})\s+([a-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?(?:\s+(gmt|utc|ut|z|[+-]\d{4}))?$/i;
 
@@ -40,7 +44,11 @@ function parseHttpDate(value: string): number | null {
   if (!match) return null;
   const [, day, monthName, year, hour, minute, second = "0", zone = "gmt"] = match;
   const month = MONTHS.indexOf((monthName as string).toLowerCase());
-  const parts = [Number(year), month, Number(day), Number(hour), Number(minute), Number(second)];
+  // Un año de dos cifras, aunque venga con cuatro ("0023"), como parsedate_to_datetime en Python y
+  // en PHP: de 0 a 68 es 20xx y de 69 a 99, 19xx (Date.UTC los pasaría todos a 19xx).
+  let fullYear = Number(year);
+  if (fullYear < 100) fullYear += fullYear > 68 ? 1900 : 2000;
+  const parts = [fullYear, month, Number(day), Number(hour), Number(minute), Number(second)];
   const [y, mo, d, h, mi, s] = parts as [number, number, number, number, number, number];
   const time = Date.UTC(y, mo, d, h, mi, s);
   const date = new Date(time);
@@ -56,8 +64,10 @@ function parseHttpDate(value: string): number | null {
   }
   let offsetMinutes = 0;
   if (zone[0] === "+" || zone[0] === "-") {
-    const sign = zone[0] === "-" ? -1 : 1;
-    offsetMinutes = sign * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(3, 5)));
+    const minutes = Number(zone.slice(1, 3)) * 60 + Number(zone.slice(3, 5));
+    // Como datetime.timezone en Python: una zona de 24 h o más no es una fecha.
+    if (minutes >= 1440) return null;
+    offsetMinutes = zone[0] === "-" ? -minutes : minutes;
   }
   return (time - offsetMinutes * 60_000) / 1000;
 }
@@ -65,7 +75,7 @@ function parseHttpDate(value: string): number | null {
 /** Segundos del header Retry-After (también acepta la forma de fecha HTTP). */
 export function parseRetryAfter(value: string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
-  const text = value.trim();
+  const text = strip(value);
   if (!text) return null;
   if (/^[0-9]+$/.test(text)) return Number(text);
   const when = parseHttpDate(text);

@@ -18,7 +18,8 @@ import { APIConnectionError, APIError, RayaClient, UnprocessableEntityError } fr
 async function paySupplier(client, destination, amount, idempotencyKey) {
   let transfer;
   try {
-    // El monto viaja tal cual lo escribiste ("25000.50"): el SDK nunca redondea.
+    // El monto viaja con el mismo valor que escribiste ("25000.50" sale como 25000.5): el SDK
+    // nunca redondea.
     transfer = await client.transfers.create({ amount, destination }, { idempotencyKey });
   } catch (error) {
     if (error instanceof UnprocessableEntityError) {

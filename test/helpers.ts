@@ -21,7 +21,7 @@ export interface RecordedRequest {
 
 interface QueuedResponse {
   status: number;
-  body: string;
+  body: string | Uint8Array<ArrayBuffer>;
   headers: Record<string, string>;
 }
 
@@ -31,10 +31,11 @@ export class MockAPI {
   readonly #queue: Array<QueuedResponse | { error: unknown }> = [];
   #count = 0;
 
+  /** `text` es el body tal cual, en vez del JSON: un string o sus bytes. */
   add(
     status = 200,
     json: unknown = null,
-    options: { headers?: Record<string, string>; text?: string } = {},
+    options: { headers?: Record<string, string>; text?: string | Uint8Array<ArrayBuffer> } = {},
   ): void {
     this.#count += 1;
     const headers = {
