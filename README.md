@@ -116,7 +116,7 @@ console.log(payment.lastResponse.requestId);
 
 ## Estilo global
 
-Si venís de stripe-python o del SDK de Python de Raya, también podés configurar una clave para todo el proceso y llamar a las clases:
+También podés configurar una clave para todo el proceso y llamar a las clases:
 
 ```js
 import { Balance, config, Payment, Transfer } from "rayacash";
