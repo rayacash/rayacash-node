@@ -410,3 +410,5 @@ Para publicar una versión: subila con `npm version patch|minor|major --no-git-t
 ---
 
 Referencia de la API: https://raya.cash/api · Soporte: soporte@raya.cash
+
+Raya Cash S.A
