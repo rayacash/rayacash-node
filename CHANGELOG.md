@@ -2,6 +2,10 @@
 
 Los cambios de cada versión de `rayacash` publicada en [npm](https://www.npmjs.com/package/rayacash). Sigue [semver](https://semver.org/lang/es/): los cambios incompatibles solo llegan en una versión mayor (`2.0.0`), y los anotamos acá.
 
+## 1.0.3
+
+Solo docs, sin cambios en el SDK: el README ya no nombra a otros SDKs y termina con el nombre de la empresa, Raya Cash S.A.
+
 ## 1.0.2
 
 Arreglos, para que el SDK se comporte igual que los de Python y PHP. Dos pueden pedirte un ajuste: la ruta de `rawRequest` va sin query (que va en `params`), sin `\` y sin caracteres de control, y un `fetch` propio tiene que devolver una `Response` con `arrayBuffer()`.
