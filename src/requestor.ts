@@ -41,29 +41,35 @@ const TIMEOUT_CODES = new Set([
   "ETIMEDOUT",
 ]);
 
-/** Rechaza antes de mandar nada lo que nunca puede andar. El formato lo valida la API. */
+/**
+ * Rechaza antes de mandar nada lo que nunca puede andar: vale tu clave secreta (`raya_sk_live_…`)
+ * o el access_token de una cuenta conectada (`raya_at_live_…`). El formato lo valida la API.
+ */
 export function checkApiKey(key: unknown): string {
   if (typeof key !== "string") {
-    throw new TypeError(`La clave secreta tiene que ser un string, no ${typeName(key)}.`);
+    throw new TypeError(
+      `La clave secreta (o el access_token de una cuenta conectada) tiene que ser un string, no ${typeName(key)}.`,
+    );
   }
   if (!strip(key)) {
     throw new AuthenticationError(
-      "Falta la clave secreta: pasala a new RayaClient({ apiKey }), asignala a config.apiKey o " +
-        "definí la variable de entorno RAYA_SECRET_KEY.",
+      "Falta la clave secreta (raya_sk_live_…) o el access_token de una cuenta conectada " +
+        "(raya_at_live_…): pasalo a new RayaClient({ apiKey }), asignalo a config.apiKey o definí " +
+        "la variable de entorno RAYA_SECRET_KEY.",
       { code: "API_KEY_MISSING" },
     );
   }
   if (key.startsWith("raya_pk_")) {
     throw new AuthenticationError(
-      "Usaste la clave pública (raya_pk_…). La API se usa con la clave secreta (raya_sk_live_…), " +
-        "solo desde tu servidor.",
+      "Usaste la clave pública (raya_pk_…). La API se usa con la clave secreta (raya_sk_live_…) o " +
+        "con el access_token de una cuenta conectada (raya_at_live_…), solo desde tu servidor.",
       { code: "API_KEY_PUBLISHABLE_NOT_ALLOWED" },
     );
   }
   if (!/^[\x21-\x7e]+$/.test(key)) {
     throw new AuthenticationError(
-      "La clave secreta tiene espacios o caracteres inválidos: copiala de nuevo desde " +
-        "Developers › API Keys.",
+      "La clave secreta o el access_token tiene espacios o caracteres inválidos: copialo de nuevo " +
+        "(la clave, desde Developers › API Keys; el access_token, de la respuesta de oauth.token).",
       { code: "API_KEY_INVALID" },
     );
   }
@@ -167,10 +173,16 @@ interface Prepared {
   idempotencyKey: string | null;
 }
 
-/** Lo que va en la URL y en el body de una request. */
+/** Lo que va en la URL y en el body de una request, y si lleva Authorization. */
 export interface RequestParts {
   query?: Record<string, string> | null;
   body?: Record<string, unknown> | null;
+  /**
+   * `false` en un endpoint sin autenticación (`oauth.token`, donde la app se identifica con
+   * `client_id` y `client_secret` en el body): no va `Authorization`, no se exige la clave y no se
+   * genera una Idempotency-Key (el servidor no la usa ahí).
+   */
+  auth?: boolean;
 }
 
 function nameOf(error: unknown): unknown {
@@ -252,14 +264,15 @@ export class APIRequestor {
       throw new RangeError("La ruta va sin \\ ni caracteres de control (codificá los ids).");
     }
 
-    // Sin clave levanta API_KEY_MISSING antes de cualquier I/O.
-    const apiKey = checkApiKey(opts.apiKey ?? this.#config.apiKey() ?? "");
-
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${apiKey}`,
       Accept: "application/json",
       "User-Agent": this.#config.userAgent(),
     };
+    if (parts.auth !== false) {
+      // Sin clave levanta API_KEY_MISSING antes de cualquier I/O.
+      const apiKey = checkApiKey(opts.apiKey ?? this.#config.apiKey() ?? "");
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
     let body: string | undefined;
     if (parts.body !== undefined && parts.body !== null) {
       if (verb === "GET") {
@@ -274,12 +287,14 @@ export class APIRequestor {
 
     let idempotencyKey: string | null = null;
     if (verb === "POST") {
-      // Una sola clave por llamada, la misma en cada reintento: nunca se ejecuta dos veces.
-      idempotencyKey =
-        opts.idempotencyKey !== undefined
-          ? validateIdempotencyKey(opts.idempotencyKey)
-          : randomUUID();
-      headers["Idempotency-Key"] = idempotencyKey;
+      if (opts.idempotencyKey !== undefined) {
+        idempotencyKey = validateIdempotencyKey(opts.idempotencyKey);
+      } else if (parts.auth !== false) {
+        // Una sola clave por llamada, la misma en cada reintento: nunca se ejecuta dos veces. Sin
+        // autenticación (oauth.token) no se genera: el servidor no la usa ahí, como en Python y PHP.
+        idempotencyKey = randomUUID();
+      }
+      if (idempotencyKey !== null) headers["Idempotency-Key"] = idempotencyKey;
     } else if (opts.idempotencyKey !== undefined) {
       throw new RangeError("La Idempotency-Key solo va en los POST.");
     }
@@ -440,7 +455,8 @@ function connectionError(p: Prepared, cause: unknown): APIConnectionError {
     const detail = typeof code === "string" ? code : (cause as TypeError).message;
     message = `No pudimos conectarnos con la API de Raya (${detail}).`;
   }
-  if (p.method === "POST") {
+  // Solo si la request llevó una (oauth.token no la lleva).
+  if (p.idempotencyKey !== null) {
     message += " Reintentá con la misma Idempotency-Key: nunca se ejecuta dos veces.";
   }
   return new APIConnectionError(message, {

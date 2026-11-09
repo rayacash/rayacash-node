@@ -16,7 +16,10 @@ export const DEFAULT_MAX_NETWORK_RETRIES = 2;
  * `RAYA_LOG`), que vale para todo el proceso.
  */
 export interface GlobalConfig {
-  /** Tu clave secreta. Si no la asignás, se lee de la variable de entorno `RAYA_SECRET_KEY`. */
+  /**
+   * Tu clave secreta (`raya_sk_live_…`) o el access_token de una cuenta conectada
+   * (`raya_at_live_…`). Si no la asignás, se lee de la variable de entorno `RAYA_SECRET_KEY`.
+   */
   apiKey: string | null | undefined;
   /** Por defecto, `https://api.raya.cash`. */
   apiBase: string;
@@ -45,8 +48,8 @@ function defaults(): GlobalConfig {
 }
 
 /**
- * La configuración del estilo global: `Balance`, `Transfer` y `Payment` la leen en cada request,
- * así que cambiarla entre llamadas surte efecto enseguida. Está sellada: asignar una opción que no
+ * La configuración del estilo global: `Balance`, `Transfer`, `Payment`, `OAuth`, `User` y
+ * `Checkout` la leen en cada request, así que cambiarla entre llamadas surte efecto enseguida. Está sellada: asignar una opción que no
  * existe (`config.apikey`) falla en vez de no hacer nada.
  *
  * ```js

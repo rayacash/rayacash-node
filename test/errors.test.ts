@@ -21,23 +21,34 @@ import { isolate } from "./helpers.ts";
 
 isolate();
 
-// Los 32 códigos del contrato (api.md › Códigos de error).
+// Los 43 códigos del contrato (api.md › Códigos de error).
 const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["INVALID_JSON", 400, InvalidRequestError],
   ["PARAMETER_MISSING", 400, InvalidRequestError],
   ["PARAMETER_INVALID", 400, InvalidRequestError],
   ["PARAMETER_UNKNOWN", 400, InvalidRequestError],
+  ["OAUTH_GRANT_INVALID", 400, InvalidRequestError],
+  ["OAUTH_GRANT_TYPE_UNSUPPORTED", 400, InvalidRequestError],
   ["API_KEY_MISSING", 401, AuthenticationError],
   ["API_KEY_INVALID", 401, AuthenticationError],
   ["API_KEY_PUBLISHABLE_NOT_ALLOWED", 401, AuthenticationError],
   ["API_KEY_EXPIRED", 401, AuthenticationError],
+  ["ACCESS_TOKEN_MISSING", 401, AuthenticationError],
+  ["ACCESS_TOKEN_INVALID", 401, AuthenticationError],
+  ["ACCESS_TOKEN_REVOKED", 401, AuthenticationError],
+  ["OAUTH_CLIENT_INVALID", 401, AuthenticationError],
   ["API_KEY_ACCOUNT_LOCKED", 403, PermissionDeniedError],
   ["API_NOT_ENABLED", 403, PermissionDeniedError],
   ["MERCHANT_NOT_CONFIGURED", 403, PermissionDeniedError],
   ["TRANSFERS_BLOCKED", 403, PermissionDeniedError],
+  ["CONNECTED_ACCOUNT_LOCKED", 403, PermissionDeniedError],
+  ["CONNECTED_ACCOUNT_NOT_CONFIGURED", 403, PermissionDeniedError],
+  ["APP_DISABLED", 403, PermissionDeniedError],
   ["TRANSFER_NOT_FOUND", 404, NotFoundError],
   ["PAYMENT_NOT_FOUND", 404, NotFoundError],
   ["NOT_FOUND", 404, NotFoundError],
+  ["USER_NOT_FOUND", 404, NotFoundError],
+  ["CHECKOUT_NOT_FOUND", 404, NotFoundError],
   ["METHOD_NOT_ALLOWED", 405, InvalidRequestError],
   ["IDEMPOTENCY_KEY_REUSED", 409, IdempotencyError],
   ["IDEMPOTENCY_KEY_IN_USE", 409, IdempotencyError],
@@ -71,8 +82,8 @@ function makeError(
   });
 }
 
-test("el catálogo tiene los 32 códigos", () => {
-  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 32);
+test("el catálogo tiene los 43 códigos", () => {
+  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 43);
 });
 
 for (const [code, status, ErrorType] of CATALOG) {
@@ -147,6 +158,18 @@ test("PAYMENT_NOT_REFUNDABLE con y sin reason", () => {
   });
   assert.equal(without.constructor, ConflictError);
   assert.deepEqual(without.data, { status: "refunded" });
+});
+
+test("CONNECTED_ACCOUNT_LOCKED trae la razón, como API_KEY_ACCOUNT_LOCKED", () => {
+  const error = makeError(403, {
+    error: {
+      code: "CONNECTED_ACCOUNT_LOCKED",
+      message: "La cuenta conectada no puede operar en este momento.",
+      data: { reason: "user_blocked" },
+    },
+  });
+  assert.equal(error.constructor, PermissionDeniedError);
+  assert.deepEqual(error.data, { reason: "user_blocked" });
 });
 
 const UNKNOWN_CODES: Array<[number, string, typeof RayaError]> = [

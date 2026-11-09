@@ -2,14 +2,28 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import util from "node:util";
 
-import { Event, ListObject, Payment, RayaObject, Transfer } from "../src/index.ts";
+import {
+  Checkout,
+  Event,
+  ListObject,
+  OAuthToken,
+  Payment,
+  RayaObject,
+  Transfer,
+  User,
+} from "../src/index.ts";
 import { convertValue } from "../src/rayaObject.ts";
 import {
+  ACCESS_TOKEN,
+  CHECKOUT_SUCCEEDED,
+  EVENT_CHECKOUT_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
+  OAUTH_TOKEN,
   PAYMENT_PENDING,
   PAYMENT_SUCCEEDED,
   TRANSFER_INBOUND,
   TRANSFER_LIST,
+  USER,
 } from "./fixtures.ts";
 import { isolate, thrown } from "./helpers.ts";
 
@@ -133,4 +147,86 @@ test("una ListObject recorre su data", () => {
 test("una ListObject sin data", () => {
   const page = ListObject.constructFrom({ object: "list" });
   assert.deepEqual([...page], []);
+});
+
+test("un checkout: ítems y back_urls planos, metadata tuya", () => {
+  const checkout = convert(CHECKOUT_SUCCEEDED);
+  assert.equal(checkout.constructor, Checkout);
+  assert.equal(checkout.net_amount, 44500);
+  assert.equal(checkout.items[0].unit_price, 45000);
+  assert.equal(Object.getPrototypeOf(checkout.items[0]), Object.prototype);
+  assert.equal(checkout.back_urls.failure, "https://tienda.example.com/pedidos/1042/error");
+  assert.equal(checkout.payer.name, "María Ejemplo");
+  assert.equal(Object.getPrototypeOf(checkout.metadata), Object.prototype);
+  assert.deepEqual(JSON.parse(JSON.stringify(checkout)), CHECKOUT_SUCCEEDED);
+  assert.deepEqual(Object.keys(checkout), Object.keys(CHECKOUT_SUCCEEDED));
+  assert.ok(util.inspect(checkout).startsWith("Checkout {"));
+});
+
+test("un usuario y sus sub-objetos", () => {
+  const user = convert(USER);
+  assert.equal(user.constructor, User);
+  assert.equal(user.identification.type, "DNI");
+  assert.equal(user.address.province, "Santa Fe");
+  assert.equal(user.business, null);
+  assert.equal(user.merchant.name, "Almacén Ejemplo");
+  assert.equal(user.identity_verified, true);
+  assert.deepEqual(user.toJSON(), USER);
+  const business = convert({
+    ...USER,
+    type: "business",
+    business: {
+      legal_name: "Almacén Ejemplo S. A.",
+      tax_id: "30123456782",
+      company_type: "SA",
+      representative: { first_name: "Lucía", last_name: "Ejemplo", tax_id: "27345678901" },
+    },
+  });
+  assert.equal(business.business.representative.last_name, "Ejemplo");
+});
+
+test("una empresa: los campos sin dato llegan en null y quedan null", () => {
+  const business = convert({
+    ...USER,
+    type: "business",
+    first_name: "Almacén Ejemplo S. A.",
+    last_name: null,
+    full_name: "Almacén Ejemplo S. A.",
+    identification: { type: "CUIT", number: "30123456782" },
+    tax_id: "30123456782",
+    business: {
+      legal_name: "Almacén Ejemplo S. A.",
+      tax_id: "30123456782",
+      company_type: null,
+      representative: { first_name: "Lucía", last_name: "Ejemplo", tax_id: null },
+    },
+  });
+  assert.equal(business.last_name, null);
+  assert.equal(business.full_name, "Almacén Ejemplo S. A.");
+  assert.equal(business.identification.type, "CUIT");
+  assert.equal(business.business.company_type, null);
+  assert.equal(business.business.representative.tax_id, null);
+});
+
+test("console.log de un OAuthToken enmascara el access_token", () => {
+  const token = convert(OAUTH_TOKEN);
+  assert.equal(token.constructor, OAuthToken);
+  assert.equal(token.access_token, ACCESS_TOKEN); // el valor está entero
+  const shown = util.inspect(token);
+  assert.ok(shown.startsWith("OAuthToken {"));
+  assert.match(shown, /access_token: 'raya_at_live_…fG9h'/);
+  assert.ok(!shown.includes(ACCESS_TOKEN));
+  assert.match(shown, /user_id: '9d4f2b7e-3c61-4e0a-9b8f-2a5c7d1e6f40'/);
+  // Para guardarlo, entero.
+  assert.equal(JSON.stringify(token), JSON.stringify(OAUTH_TOKEN));
+  assert.deepEqual(token.toJSON(), OAUTH_TOKEN);
+  const empty = OAuthToken.constructFrom({ object: "oauth_token" });
+  assert.equal(util.inspect(empty), "OAuthToken { object: 'oauth_token' }");
+});
+
+test("un evento checkout.* hidrata un Checkout", () => {
+  const event = Event.constructFrom(EVENT_CHECKOUT_SUCCEEDED);
+  assert.equal(event.type, "checkout.succeeded");
+  assert.equal(event.data.object.constructor, Checkout);
+  assert.equal((event.data.object as Checkout).fee, 500);
 });

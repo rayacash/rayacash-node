@@ -3,6 +3,7 @@ import { test } from "node:test";
 import util from "node:util";
 
 import {
+  APIError,
   AuthenticationError,
   ListObject,
   Payment,
@@ -11,10 +12,16 @@ import {
   WebhookSignature,
 } from "../src/index.ts";
 import {
+  ACCESS_TOKEN,
   BALANCE,
+  CLIENT_ID,
+  CLIENT_SECRET,
   EVENT_PAYMENT_SUCCEEDED,
+  OAUTH_CODE,
   PAYMENT_REFUNDED,
+  REDIRECT_URI,
   TRANSFER_LIST,
+  USER,
   WEBHOOK_SECRET,
 } from "./fixtures.ts";
 import { isolate, MockAPI, OTHER_KEY, rejection, TEST_KEY, thrown } from "./helpers.ts";
@@ -71,6 +78,44 @@ for (const [key, code] of INVALID_KEYS) {
     assert.equal(error.code, code);
   });
 }
+
+test("el access_token de una cuenta conectada vale como clave", async () => {
+  const api = new MockAPI();
+  api.add(200, USER);
+  await api.client(ACCESS_TOKEN).users.retrieve("me");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+  api.add(200, USER);
+  await new RayaClient({ apiKey: ACCESS_TOKEN, fetch: api.fetch }).users.retrieve("me");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+  process.env.RAYA_SECRET_KEY = ACCESS_TOKEN;
+  api.add(200, USER);
+  await api.client(null).users.retrieve("me");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+  api.add(200, USER);
+  await api.client().users.retrieve("me", { apiKey: ACCESS_TOKEN }); // por request
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+});
+
+test("los mensajes de la clave nombran también el access_token", () => {
+  let error = thrown(() => new RayaClient(""));
+  assert.equal(error.code, "API_KEY_MISSING");
+  assert.match(error.message, /raya_sk_live_….*raya_at_live_….*RAYA_SECRET_KEY/);
+  error = thrown(() => new RayaClient("raya_pk_live_x"));
+  assert.equal(error.code, "API_KEY_PUBLISHABLE_NOT_ALLOWED");
+  assert.match(error.message, /raya_at_live_/);
+  error = thrown(() => new RayaClient(`${ACCESS_TOKEN} `));
+  assert.equal(error.code, "API_KEY_INVALID");
+  assert.match(error.message, /access_token/);
+});
+
+test("console.log enmascara también un access_token", () => {
+  const client = new RayaClient(ACCESS_TOKEN);
+  assert.equal(
+    util.inspect(client),
+    "RayaClient { apiBase: 'https://api.raya.cash', apiKey: 'raya_at_live_…fG9h' }",
+  );
+  assert.ok(!JSON.stringify(client).includes(ACCESS_TOKEN));
+});
 
 test("la clave tiene que ser un string", () => {
   // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
@@ -221,6 +266,32 @@ test("los timeouts", async () => {
   await client.balance.retrieve({ timeout: 5_000 });
   await api.client(TEST_KEY, { timeout: 90_000 }).balance.retrieve();
   assert.deepEqual(state.timeouts, [65_000, 5_000, 90_000]);
+});
+
+test("oauth.token acepta timeout y maxNetworkRetries por llamada, y nada más", async () => {
+  const api = new MockAPI();
+  api.addError(500, "INTERNAL_ERROR");
+  const oauth = api.client(null).oauth;
+  const params = {
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    code: OAUTH_CODE,
+    redirect_uri: REDIRECT_URI,
+  };
+  const error = await rejection(oauth.token(params, { timeout: 5_000, maxNetworkRetries: 0 }));
+  assert.ok(error instanceof APIError);
+  assert.equal(error.code, "INTERNAL_ERROR");
+  assert.equal(error.idempotencyKey, null); // la request no llevó ninguna
+  assert.equal(api.requests.length, 1); // maxNetworkRetries: 0
+  assert.deepEqual(state.timeouts, [5_000]);
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = oauth as any;
+  for (const options of [{ apiKey: ACCESS_TOKEN }, { idempotencyKey: "canje-1" }]) {
+    const rejected = await rejection(untyped.token(params, options));
+    assert.ok(rejected instanceof RangeError);
+    assert.match(rejected.message, /^oauth\.token no acepta/);
+  }
+  assert.equal(api.requests.length, 1);
 });
 
 test("los headers por defecto", async () => {

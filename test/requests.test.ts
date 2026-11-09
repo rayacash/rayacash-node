@@ -22,10 +22,16 @@ import { timing } from "../src/retry.ts";
 import { formatFixed, logInfo, logSettings } from "../src/util.ts";
 import {
   BALANCE,
+  CLIENT_ID,
+  CLIENT_SECRET,
+  OAUTH_CODE,
+  OAUTH_TOKEN,
   PAYMENT_ID,
   PAYMENT_PENDING,
   PAYMENT_REFUNDED,
+  REDIRECT_URI,
   TRANSFER_OUTBOUND_PENDING,
+  USER_ID,
 } from "./fixtures.ts";
 import {
   captureStderr,
@@ -181,6 +187,41 @@ test("los errores de conexión de un GET no tienen idempotency key", async () =>
   assert.equal(error.idempotencyKey, null);
   assert.match(error.message, /ECONNREFUSED/);
   assert.doesNotMatch(error.message, /Idempotency-Key/);
+});
+
+const TOKEN_PARAMS = {
+  client_id: CLIENT_ID,
+  client_secret: CLIENT_SECRET,
+  code: OAUTH_CODE,
+  redirect_uri: REDIRECT_URI,
+};
+
+test("un corte en oauth.token no pide reintentar con la misma Idempotency-Key", async () => {
+  // El único POST sin Idempotency-Key: el aviso solo va cuando la request llevó una.
+  const api = new MockAPI();
+  api.failWith(networkError());
+  const error = await rejection(
+    api.client(null, { maxNetworkRetries: 0 }).oauth.token(TOKEN_PARAMS),
+  );
+  assert.ok(error instanceof APIConnectionError);
+  assert.equal(error.code, "NETWORK_ERROR");
+  assert.equal(error.shouldRetry, true);
+  assert.equal(error.idempotencyKey, null);
+  assert.equal(error.message, "No pudimos conectarnos con la API de Raya (ECONNREFUSED).");
+  assert.equal(api.requests.length, 1);
+});
+
+test("oauth.token reintenta un corte, siempre sin Idempotency-Key", async () => {
+  const api = new MockAPI();
+  api.failWith(timeoutError());
+  api.add(200, OAUTH_TOKEN);
+  const token = await api.client(null).oauth.token(TOKEN_PARAMS);
+  assert.equal(token.user_id, USER_ID);
+  assert.deepEqual(
+    api.requests.map((request) => request.headers.get("idempotency-key")),
+    [null, null],
+  );
+  assert.deepEqual(state.sleeps, [0.5]);
 });
 
 test("un TypeError sin cause (la request está mal) no se reintenta", async () => {
