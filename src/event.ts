@@ -1,3 +1,4 @@
+import type { Checkout } from "./checkout.ts";
 import type { Payment } from "./payment.ts";
 import { RayaObject } from "./rayaObject.ts";
 import { registerObjectClass } from "./registry.ts";
@@ -12,14 +13,19 @@ export type EventType =
   | "payment.succeeded"
   | "payment.failed"
   | "payment.refunded"
+  | "checkout.created"
+  | "checkout.succeeded"
+  | "checkout.failed"
+  | "checkout.refunded"
   | "webhook.test";
 
 /**
  * Un evento de webhook. Armalo con `Webhook.constructEvent(…)`.
  *
- * `event.data.object` es el `Transfer` o el `Payment` tal como estaba cuando ocurrió el evento.
- * `webhook.test` (el botón «Enviar evento de prueba») trae `{ object: "test", … }`: respondé 2xx e
- * ignoralo.
+ * `event.data.object` es el `Transfer`, el `Payment` o el `Checkout` tal como estaba cuando ocurrió
+ * el evento. Los `checkout.*` le llegan al dueño de la app: el comercio conectado recibe los
+ * `payment.*` de ese mismo cobro. `webhook.test` (el botón «Enviar evento de prueba») trae
+ * `{ object: "test", … }`: respondé 2xx e ignoralo.
  */
 export class Event extends RayaObject {
   static override readonly OBJECT_NAME = "event";
@@ -37,7 +43,7 @@ export class Event extends RayaObject {
 
 export declare namespace Event {
   interface Data {
-    object: Transfer | Payment | RayaObject;
+    object: Transfer | Payment | Checkout | RayaObject;
   }
 }
 

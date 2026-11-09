@@ -126,10 +126,17 @@ export function userAgent(appInfo: AppInfo | null): string {
   return ua;
 }
 
-/** `raya_sk_live_…AbCd`: para inspect y logs. Nunca mostramos la clave entera. */
+// Los prefijos que se conservan al enmascarar: la clave secreta y el access_token de una cuenta
+// conectada.
+const KEY_PREFIXES = ["raya_sk_live_", "raya_at_live_"];
+
+/**
+ * `raya_sk_live_…AbCd` (o `raya_at_live_…AbCd`): para inspect y logs. Nunca mostramos la clave
+ * ni el access_token enteros.
+ */
 export function maskKey(key: string | null): string | null {
   if (!key) return null;
-  const prefix = key.startsWith("raya_sk_live_") ? "raya_sk_live_" : "";
+  const prefix = KEY_PREFIXES.find((candidate) => key.startsWith(candidate)) ?? "";
   if (key.length <= prefix.length + 8) return `${prefix}…`;
   return `${prefix}…${key.slice(-4)}`;
 }

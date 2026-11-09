@@ -1,6 +1,6 @@
 {
   "name": "rayacash",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "SDK oficial de Node.js para la API de Raya Cash: pagos por transferencia, transferencias, balance y webhooks.",
   "keywords": [
     "raya",

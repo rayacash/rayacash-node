@@ -1,8 +1,10 @@
 import { BalanceService } from "./balanceService.ts";
+import { CheckoutService } from "./checkoutService.ts";
 import { DEFAULT_API_BASE, DEFAULT_MAX_NETWORK_RETRIES, DEFAULT_TIMEOUT } from "./config.ts";
 import { checkParams, encodeQuery, isPlainObject, typeName } from "./encoding.ts";
 import type { Event } from "./event.ts";
 import { ListObject, setRetrieveContext } from "./listObject.ts";
+import { OAuthService } from "./oauthService.ts";
 import { PaymentService } from "./paymentService.ts";
 import type { RayaObject } from "./rayaObject.ts";
 import { type PostRequestOptions, validateOptions } from "./requestOptions.ts";
@@ -18,12 +20,14 @@ import {
   validateTimeout,
 } from "./requestor.ts";
 import { TransferService } from "./transferService.ts";
+import { UserService } from "./userService.ts";
 import { type AppInfo, INSPECT, maskKey, userAgent, validateAppInfo } from "./util.ts";
 import { constructEvent, DEFAULT_TOLERANCE, type Payload } from "./webhook.ts";
 
 export interface RayaClientOptions {
   /**
-   * Tu clave secreta (`raya_sk_live_…`). Si no la pasás, se lee de la variable de entorno
+   * Tu clave secreta (`raya_sk_live_…`) o, para cobrar a nombre de una cuenta que conectó tu app,
+   * su access_token (`raya_at_live_…`). Si no la pasás, se lee de la variable de entorno
    * `RAYA_SECRET_KEY`.
    */
   apiKey?: string | null;
@@ -143,11 +147,21 @@ function splitArguments(
  *
  * La clave secreta va solo en tu servidor, leída de una variable de entorno: nunca en el
  * navegador, en una app mobile ni en el repositorio.
+ *
+ * Para cobrar a nombre de una cuenta que conectó tu app, el cliente se arma con su access_token
+ * (`new RayaClient(token.access_token)`): `client.checkout` y `client.users` usan ese token;
+ * `client.oauth.token()` lo consigue y no necesita clave.
  */
 export class RayaClient {
   readonly balance: BalanceService;
   readonly transfers: TransferService;
   readonly payments: PaymentService;
+  /** Canjear el `code` de una cuenta que conectó tu app por su access_token. */
+  readonly oauth: OAuthService;
+  /** Los datos de la cuenta conectada (con su access_token). */
+  readonly users: UserService;
+  /** Los checkouts a nombre de la cuenta conectada (con su access_token). */
+  readonly checkout: CheckoutService;
 
   readonly #config: ClientConfig;
   readonly #requestor: APIRequestor;
@@ -191,6 +205,9 @@ export class RayaClient {
     this.balance = new BalanceService(this.#requestor);
     this.transfers = new TransferService(this.#requestor);
     this.payments = new PaymentService(this.#requestor);
+    this.oauth = new OAuthService(this.#requestor);
+    this.users = new UserService(this.#requestor);
+    this.checkout = new CheckoutService(this.#requestor);
   }
 
   /**

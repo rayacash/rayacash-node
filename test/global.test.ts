@@ -1,4 +1,4 @@
-// El estilo global: config.apiKey + Payment.create(…).
+// El estilo global: config.apiKey + Payment.create(…), OAuth.token(…), Checkout.create(…).
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -7,24 +7,42 @@ import {
   APIError,
   AuthenticationError,
   Balance,
+  Checkout,
   config,
   ListObject,
+  OAuth,
+  OAuthToken,
   Payment,
   setAppInfo,
   Transfer,
+  User,
   Webhook,
   WebhookSignature,
 } from "../src/index.ts";
 import {
+  ACCESS_TOKEN,
   BALANCE,
+  CHECKOUT_ID,
+  CHECKOUT_ITEMS,
+  CHECKOUT_PENDING,
+  CHECKOUT_REFUNDED,
+  CHECKOUT_SUCCEEDED,
+  CLIENT_ID,
+  CLIENT_SECRET,
+  EVENT_CHECKOUT_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
+  OAUTH_CODE,
+  OAUTH_TOKEN,
   PAYMENT_ID,
   PAYMENT_PENDING,
   PAYMENT_REFUNDED,
   PAYMENT_SUCCEEDED,
+  REDIRECT_URI,
   TRANSFER_INBOUND,
   TRANSFER_LIST,
   TRANSFER_OUTBOUND_PENDING,
+  USER,
+  USER_ID,
   WEBHOOK_SECRET,
 } from "./fixtures.ts";
 import { isolate, MockAPI, OTHER_KEY, rejection, TEST_KEY, thrown } from "./helpers.ts";
@@ -202,4 +220,88 @@ test("los valores inválidos de config fallan en la request", async () => {
   untyped.fetch = null;
   untyped.appInfo = { name: "x", otra: "y" };
   assert.ok((await rejection(Balance.retrieve())) instanceof RangeError);
+});
+
+// --- Apps y cuentas conectadas ----------------------------------------------------------------
+
+const TOKEN_PARAMS = {
+  client_id: CLIENT_ID,
+  client_secret: CLIENT_SECRET,
+  code: OAUTH_CODE,
+  redirect_uri: REDIRECT_URI,
+};
+
+test("los endpoints de apps y cuentas conectadas", async () => {
+  const api = globalAPI();
+  api.add(200, OAUTH_TOKEN);
+  const token = await OAuth.token(TOKEN_PARAMS);
+  assert.equal(token.constructor, OAuthToken);
+  assert.equal(api.last.headers.get("authorization"), null); // la app se identifica en el body
+  assert.deepEqual(api.lastJson(), { ...TOKEN_PARAMS, grant_type: "authorization_code" });
+
+  config.apiKey = token.access_token; // el access_token vale como clave
+  api.add(200, USER);
+  const user = await User.retrieve(token.user_id);
+  assert.equal(user.constructor, User);
+  assert.equal(api.last.url.pathname, `/v1/users/${USER_ID}`);
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+
+  api.add(201, CHECKOUT_PENDING);
+  const checkout = await Checkout.create({ items: CHECKOUT_ITEMS, fee: 500 });
+  assert.equal(checkout.constructor, Checkout);
+  assert.deepEqual(api.lastJson(), { items: CHECKOUT_ITEMS, fee: 500 });
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+
+  api.add(200, CHECKOUT_SUCCEEDED);
+  assert.equal((await Checkout.retrieve(CHECKOUT_ID)).status, "succeeded");
+
+  api.add(200, CHECKOUT_REFUNDED);
+  const refunded = await Checkout.refund(CHECKOUT_ID, { idempotencyKey: "r-1" });
+  assert.equal(refunded.status, "refunded");
+  assert.equal(api.last.url.pathname, `/v1/checkout/orders/${CHECKOUT_ID}/refund`);
+  assert.equal(api.last.headers.get("idempotency-key"), "r-1");
+});
+
+test("OAuth.token no necesita clave", async () => {
+  const api = new MockAPI();
+  config.fetch = api.fetch;
+  api.add(200, OAUTH_TOKEN);
+  const token = await OAuth.token(TOKEN_PARAMS);
+  assert.equal(token.user_id, USER_ID);
+  assert.equal(api.last.headers.get("authorization"), null);
+  assert.equal(api.last.headers.get("idempotency-key"), null); // el code se canjea una sola vez
+});
+
+test("checkout.refund() desde la instancia usa el cliente del que vino", async () => {
+  const globalApi = globalAPI();
+  const otherApi = new MockAPI();
+  const client = otherApi.client(ACCESS_TOKEN);
+  otherApi.add(200, CHECKOUT_SUCCEEDED);
+  const checkout = await client.checkout.orders.retrieve(CHECKOUT_ID);
+  otherApi.add(200, CHECKOUT_REFUNDED);
+  const refunded = await checkout.refund();
+  assert.equal(refunded.status, "refunded");
+  assert.equal(checkout.status, "succeeded"); // devuelve un checkout nuevo, no muta el original
+  assert.equal(otherApi.last.url.pathname, `/v1/checkout/orders/${CHECKOUT_ID}/refund`);
+  assert.equal(otherApi.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
+  assert.deepEqual(globalApi.requests, []);
+});
+
+test("los eventos checkout.* de Webhook.constructEvent usan el estilo global", async () => {
+  const api = globalAPI();
+  const body = JSON.stringify(EVENT_CHECKOUT_SUCCEEDED);
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const checkout = Webhook.constructEvent(body, header, WEBHOOK_SECRET).data.object;
+  assert.ok(checkout instanceof Checkout);
+  api.add(200, CHECKOUT_REFUNDED);
+  await checkout.refund({ idempotencyKey: "r-2" });
+  assert.equal(api.last.url.pathname, `/v1/checkout/orders/${CHECKOUT_ID}/refund`);
+  assert.equal(api.last.headers.get("idempotency-key"), "r-2");
+});
+
+test("el reembolso de un checkout necesita un id", async () => {
+  const checkout = Checkout.constructFrom({ object: "checkout" });
+  const error = await rejection(checkout.refund());
+  assert.ok(error instanceof RangeError);
+  assert.match(error.message, /no tiene id/);
 });
