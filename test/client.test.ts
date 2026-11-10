@@ -20,6 +20,7 @@ import {
   OAUTH_CODE,
   PAYMENT_REFUNDED,
   REDIRECT_URI,
+  TEST_MODE_ACCESS_TOKEN,
   TRANSFER_LIST,
   USER,
   WEBHOOK_SECRET,
@@ -115,6 +116,24 @@ test("console.log enmascara también un access_token", () => {
     "RayaClient { apiBase: 'https://api.raya.cash', apiKey: 'raya_at_live_…fG9h' }",
   );
   assert.ok(!JSON.stringify(client).includes(ACCESS_TOKEN));
+});
+
+test("el access_token de prueba de una app vale como clave y conserva su prefijo", async () => {
+  // El de Developers › Apps › tu app › Test: viaja como el de una cuenta conectada, y la máscara
+  // conserva su prefijo y sus últimos 4.
+  const api = new MockAPI();
+  api.add(200, USER);
+  const client = api.client(TEST_MODE_ACCESS_TOKEN);
+  await client.users.retrieve("me");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_MODE_ACCESS_TOKEN}`);
+  assert.equal(
+    util.inspect(client),
+    "RayaClient { apiBase: 'https://api.raya.cash', apiKey: 'raya_at_test_…L0sA' }",
+  );
+  assert.equal(client.toJSON().apiKey, "raya_at_test_…L0sA");
+  assert.ok(!JSON.stringify(client).includes(TEST_MODE_ACCESS_TOKEN));
+  // Con 8 caracteres o menos después del prefijo, solo el prefijo.
+  assert.equal(new RayaClient("raya_at_test_12345678").toJSON().apiKey, "raya_at_test_…");
 });
 
 test("la clave tiene que ser un string", () => {

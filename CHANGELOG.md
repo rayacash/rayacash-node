@@ -2,6 +2,25 @@
 
 Los cambios de cada versión de `rayacash` publicada en [npm](https://www.npmjs.com/package/rayacash). Sigue [semver](https://semver.org/lang/es/): los cambios incompatibles solo llegan en una versión mayor (`2.0.0`), y los anotamos acá.
 
+## 1.2.0
+
+Raya Connect: los pagos de las apps pasan a llamarse `client.connect.orders` y `ConnectOrder` (antes, `client.checkout.orders` y `Checkout`), y el código que usa los nombres de la 1.1.0 sigue andando: quedan como alias deprecados hasta la 2.0.0 (lo que cambió la API y no tiene alias está abajo).
+
+- `client.connect.orders.create(…)` (`POST /v1/connect/orders`), `client.connect.orders.retrieve(orderId)` (`GET /v1/connect/orders/:id`) y `client.connect.orders.refund(orderId, { idempotencyKey })` (`POST /v1/connect/orders/:id/refund`), con los mismos parámetros, opciones y validaciones que en la 1.1.0 (los mensajes nombran `connect.orders.create` y `orderId`). Devuelven un `ConnectOrder` (`object: "connect.order"`), con `ConnectOrder.Item`, `ConnectOrder.BankTransfer`, `ConnectOrder.BackUrls` y `ConnectOrder.Payer`, y `order.refund()` en la instancia. En el estilo global: `ConnectOrder.create(…)`, `ConnectOrder.retrieve(orderId)` y `ConnectOrder.refund(orderId)`. En la 1.1.0, `client.checkout.orders` y `Checkout` llaman a `/v1/checkout/orders`, que la API renombró a `/v1/connect/orders` (la ruta vieja da 404): para usar Raya Connect, actualizá a la 1.2.0.
+- Tipos nuevos: `ConnectOrderStatus`, `ConnectOrderCreateParams`, `ConnectOrderItemParams`, `ConnectOrderBackUrlsParams`, `ConnectService` y `ConnectOrderService`.
+- Los nombres de la 1.1.0 siguen andando como alias deprecados (con `@deprecated`, que muestra tu editor) hasta la 2.0.0, y usan las rutas nuevas:
+  - `client.checkout` es el mismo objeto que `client.connect` (`client.checkout.orders` es `client.connect.orders`) y avisa una vez por proceso con un `DeprecationWarning` (`RAYACASH_DEP_CHECKOUT`).
+  - `Checkout` es la misma clase que `ConnectOrder`: `instanceof` anda con los dos nombres, igual que `Checkout.create(…)`, `Checkout.retrieve(…)`, `Checkout.refund(…)`, `Checkout.Item`, `Checkout.BankTransfer`, `Checkout.BackUrls` y `Checkout.Payer`. Por ser la misma clase, `Checkout.OBJECT_NAME` vale `"connect.order"` (en la 1.1.0, `"checkout"`).
+  - `CheckoutStatus`, `CheckoutCreateParams`, `CheckoutItemParams`, `CheckoutBackUrlsParams`, `CheckoutService` y `CheckoutOrdersService` son `ConnectOrderStatus`, `ConnectOrderCreateParams`, `ConnectOrderItemParams`, `ConnectOrderBackUrlsParams`, `ConnectService` y `ConnectOrderService`.
+- La API también cambió sus rutas y los nombres que manda, y eso no tiene alias: usá los valores nuevos.
+  - Las rutas son `/v1/connect/orders`, `/v1/connect/orders/:id` y `/v1/connect/orders/:id/refund` (eran `/v1/checkout/orders…`): un `rawRequest` a `/v1/checkout/orders` da 404.
+  - Los eventos son `connect.order.created`, `connect.order.succeeded`, `connect.order.failed` y `connect.order.refunded`. `EventType` conserva los `checkout.*`, deprecados, solo para que tu código compile: la API ya no los emite.
+  - Un pago que no existe da `NotFoundError` con `code === "ORDER_NOT_FOUND"` (era `CHECKOUT_NOT_FOUND`).
+  - El `scope` del `OAuthToken` es `"orders profile"` (era `"checkout profile"`).
+  - El `object` es `"connect.order"`. Un `object: "checkout"` (el body de un webhook emitido antes del cambio de nombre, si se reenvía) también se arma como `ConnectOrder`, y en TypeScript `ConnectOrder.object` admite los dos.
+- `console.log(client)`, `JSON.stringify(client)` y `console.log(token)` enmascaran con su prefijo el access_token de la cuenta de prueba de una app (Developers › Apps › tu app › Test): `raya_at_test_…AbCd`, en vez de `…AbCd`.
+- README: «Apps y cuentas conectadas» pasa a ser «Raya Connect», con los nombres nuevos y, al final, desde qué versión existe cada uno y los alias para quien viene de la 1.1.0. Suma «Probar sin cuentas reales» (la cuenta de prueba de tu app); el `state` lo genera tu servidor en cada clic (`/raya/conectar`) y lo comprueba el callback; la cuenta conectada no necesita haber configurado su negocio (el primer pago le crea el comercio, y `CONNECTED_ACCOUNT_NOT_CONFIGURED` queda para una cuenta sin CUIT/CUIL válido), y el access_token se guarda en tu servidor junto al `user_id`, sin pedir cifrarlo. Lo mismo en `examples/cobrar-para-una-cuenta-conectada.mjs` y en los JSDoc de `OAuthToken` y `User.merchant`.
+
 ## 1.1.0
 
 Apps y cuentas conectadas: cobrar a nombre de otras cuentas de Raya con tu comisión (Developers › Apps). Cinco endpoints nuevos, sin cambios incompatibles.

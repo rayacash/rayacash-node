@@ -6,8 +6,8 @@ import { test } from "node:test";
 import {
   AuthenticationError,
   Balance,
-  Checkout,
-  type CheckoutCreateParams,
+  ConnectOrder,
+  type ConnectOrderCreateParams,
   InvalidRequestError,
   ListObject,
   NotFoundError,
@@ -22,17 +22,17 @@ import {
 import {
   ACCESS_TOKEN,
   BALANCE,
-  CHECKOUT_BACK_URLS,
-  CHECKOUT_ID,
-  CHECKOUT_ITEMS,
-  CHECKOUT_PENDING,
-  CHECKOUT_REFUNDED,
-  CHECKOUT_SUCCEEDED,
   CLIENT_ID,
   CLIENT_SECRET,
   NOTIFICATION_URL,
   OAUTH_CODE,
   OAUTH_TOKEN,
+  ORDER_BACK_URLS,
+  ORDER_ID,
+  ORDER_ITEMS,
+  ORDER_PENDING,
+  ORDER_REFUNDED,
+  ORDER_SUCCEEDED,
   PAYMENT_ID,
   PAYMENT_PENDING,
   PAYMENT_REFUNDED,
@@ -191,8 +191,8 @@ test("un id «.» o «..» falla sin mandar nada", async () => {
     [() => client.payments.retrieve(".."), "paymentId"],
     [() => client.payments.refund(".."), "paymentId"],
     [() => client.users.retrieve("."), "userId"],
-    [() => client.checkout.orders.retrieve(".."), "checkoutId"],
-    [() => client.checkout.orders.refund("."), "checkoutId"],
+    [() => client.connect.orders.retrieve(".."), "orderId"],
+    [() => client.connect.orders.refund("."), "orderId"],
   ];
   for (const [call, name] of calls) {
     const error = await rejection(call());
@@ -342,7 +342,7 @@ test("los errores traen el request id", async () => {
   assert.equal(api.requests.length, 1); // los 4xx no se reintentan
 });
 
-// --- Apps y cuentas conectadas ----------------------------------------------------------------
+// --- Raya Connect -----------------------------------------------------------------------------
 
 const TOKEN_PARAMS = {
   client_id: CLIENT_ID,
@@ -351,11 +351,11 @@ const TOKEN_PARAMS = {
   redirect_uri: REDIRECT_URI,
 };
 
-const CHECKOUT_PARAMS: CheckoutCreateParams = {
-  items: CHECKOUT_ITEMS,
+const ORDER_PARAMS: ConnectOrderCreateParams = {
+  items: ORDER_ITEMS,
   fee: 500,
   external_reference: "pedido-1042",
-  back_urls: CHECKOUT_BACK_URLS,
+  back_urls: ORDER_BACK_URLS,
   auto_return: "approved",
   notification_url: NOTIFICATION_URL,
   metadata: { pedido_id: "1042" },
@@ -369,7 +369,7 @@ test("oauth.token", async () => {
   assert.equal(token.constructor, OAuthToken);
   assert.equal(token.access_token, ACCESS_TOKEN);
   assert.equal(token.user_id, USER_ID);
-  assert.equal(token.scope, "checkout profile");
+  assert.equal(token.scope, "orders profile");
   assert.equal(token.expires_in, null);
   assert.equal(token.refresh_token, null);
   const request = api.last;
@@ -474,40 +474,40 @@ test("users.retrieve de otra cuenta da USER_NOT_FOUND", async () => {
   assert.equal(error.code, "USER_NOT_FOUND");
 });
 
-test("checkout.orders.create", async () => {
+test("connect.orders.create", async () => {
   const api = new MockAPI();
-  api.add(201, CHECKOUT_PENDING);
-  const checkout = await api.client(ACCESS_TOKEN).checkout.orders.create(CHECKOUT_PARAMS);
-  assert.equal(checkout.constructor, Checkout);
-  assert.equal(checkout.status, "pending");
-  assert.equal(checkout.fee, 500);
-  assert.equal(checkout.net_amount, 44500);
-  assert.equal(checkout.account, USER_ID);
-  assert.equal(checkout.items[0]?.unit_price, 45000);
-  assert.equal(checkout.bank_transfer.cvu, "0000123390456538582824");
-  assert.ok(checkout.checkout_url.endsWith(CHECKOUT_ID));
+  api.add(201, ORDER_PENDING);
+  const order = await api.client(ACCESS_TOKEN).connect.orders.create(ORDER_PARAMS);
+  assert.equal(order.constructor, ConnectOrder);
+  assert.equal(order.status, "pending");
+  assert.equal(order.fee, 500);
+  assert.equal(order.net_amount, 44500);
+  assert.equal(order.account, USER_ID);
+  assert.equal(order.items[0]?.unit_price, 45000);
+  assert.equal(order.bank_transfer.cvu, "0000123390456538582824");
+  assert.ok(order.checkout_url.endsWith(ORDER_ID));
   const request = api.last;
-  assert.deepEqual([request.method, request.url.pathname], ["POST", "/v1/checkout/orders"]);
+  assert.deepEqual([request.method, request.url.pathname], ["POST", "/v1/connect/orders"]);
   assert.equal(request.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
   assert.deepEqual(api.lastJson(), {
     items: [{ title: "Pedido 1042", quantity: 1, unit_price: 45000 }],
     fee: 500,
     external_reference: "pedido-1042",
     metadata: { pedido_id: "1042" },
-    back_urls: CHECKOUT_BACK_URLS,
+    back_urls: ORDER_BACK_URLS,
     auto_return: "approved",
     notification_url: NOTIFICATION_URL,
   });
   // Sin clave propia, generamos un UUID v4 para esta llamada.
   const key = request.headers.get("idempotency-key") ?? "";
   assert.match(key, UUID_V4);
-  assert.equal(checkout.lastResponse?.idempotencyKey, key);
+  assert.equal(order.lastResponse?.idempotencyKey, key);
 });
 
-test("checkout.orders.create manda los montos exactos y solo lo que pasás", async () => {
+test("connect.orders.create manda los montos exactos y solo lo que pasás", async () => {
   const api = new MockAPI();
-  api.add(201, CHECKOUT_PENDING);
-  await api.client(ACCESS_TOKEN).checkout.orders.create(
+  api.add(201, ORDER_PENDING);
+  await api.client(ACCESS_TOKEN).connect.orders.create(
     {
       items: [
         { title: "Remera", quantity: 2, unit_price: new FakeDecimal("22500.50") },
@@ -519,42 +519,42 @@ test("checkout.orders.create manda los montos exactos y solo lo que pasás", asy
       back_urls: { success: null },
       expires_in: 3600,
     },
-    { idempotencyKey: "pedido-1042-checkout" },
+    { idempotencyKey: "pedido-1042-pago" },
   );
   assert.equal(
     api.last.body,
     '{"items":[{"title":"Remera","quantity":2,"unit_price":22500.5},' +
       '{"title":"Envio","quantity":1,"unit_price":1500}],"fee":500,"expires_in":3600}',
   );
-  assert.equal(api.last.headers.get("idempotency-key"), "pedido-1042-checkout");
+  assert.equal(api.last.headers.get("idempotency-key"), "pedido-1042-pago");
 });
 
-const CHECKOUT_INVALID: Array<
+const ORDER_INVALID: Array<
   [Record<string, unknown>, typeof TypeError | typeof RangeError, RegExp]
 > = [
   [{}, TypeError, /^items tiene que ser una lista de ítems/],
-  [{ items: CHECKOUT_ITEMS[0] }, TypeError, /^items tiene que ser una lista de ítems/],
+  [{ items: ORDER_ITEMS[0] }, TypeError, /^items tiene que ser una lista de ítems/],
   [{ items: ["Pedido 1042"] }, TypeError, /^items\[0\] tiene que ser un objeto/],
-  [{ items: [{ ...CHECKOUT_ITEMS[0], price: 1 }] }, TypeError, /^items\[0\] no acepta "price"/],
-  [{ items: [{ ...CHECKOUT_ITEMS[0], unit_price: true }] }, TypeError, /^items\[0\]\.unit_price/],
-  [{ items: [{ ...CHECKOUT_ITEMS[0], unit_price: "mil" }] }, RangeError, /^items\[0\]\.unit_price/],
-  [{ items: CHECKOUT_ITEMS, fee: "mil" }, RangeError, /^fee/],
-  [{ items: CHECKOUT_ITEMS, fee: false }, TypeError, /^fee/],
-  [{ items: CHECKOUT_ITEMS, back_urls: "https://tienda.example.com" }, TypeError, /^back_urls/],
+  [{ items: [{ ...ORDER_ITEMS[0], price: 1 }] }, TypeError, /^items\[0\] no acepta "price"/],
+  [{ items: [{ ...ORDER_ITEMS[0], unit_price: true }] }, TypeError, /^items\[0\]\.unit_price/],
+  [{ items: [{ ...ORDER_ITEMS[0], unit_price: "mil" }] }, RangeError, /^items\[0\]\.unit_price/],
+  [{ items: ORDER_ITEMS, fee: "mil" }, RangeError, /^fee/],
+  [{ items: ORDER_ITEMS, fee: false }, TypeError, /^fee/],
+  [{ items: ORDER_ITEMS, back_urls: "https://tienda.example.com" }, TypeError, /^back_urls/],
   [
-    { items: CHECKOUT_ITEMS, back_urls: { cancel: "https://tienda.example.com" } },
+    { items: ORDER_ITEMS, back_urls: { cancel: "https://tienda.example.com" } },
     TypeError,
     /^back_urls no acepta "cancel"/,
   ],
-  [{ items: CHECKOUT_ITEMS, metadata: "pedido 1042" }, TypeError, /^metadata/],
-  [{ items: CHECKOUT_ITEMS, marketplace_fee: 500 }, TypeError, /no acepta "marketplace_fee"/],
+  [{ items: ORDER_ITEMS, metadata: "pedido 1042" }, TypeError, /^metadata/],
+  [{ items: ORDER_ITEMS, marketplace_fee: 500 }, TypeError, /no acepta "marketplace_fee"/],
 ];
 
-for (const [params, ErrorType, message] of CHECKOUT_INVALID) {
-  test(`checkout.orders.create valida antes de mandar: ${JSON.stringify(params)}`, async () => {
+for (const [params, ErrorType, message] of ORDER_INVALID) {
+  test(`connect.orders.create valida antes de mandar: ${JSON.stringify(params)}`, async () => {
     const api = new MockAPI();
     // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
-    const untyped = api.client(ACCESS_TOKEN).checkout.orders as any;
+    const untyped = api.client(ACCESS_TOKEN).connect.orders as any;
     const error = await rejection(untyped.create(params));
     assert.equal(error.constructor, ErrorType);
     assert.match(error.message, message);
@@ -562,48 +562,48 @@ for (const [params, ErrorType, message] of CHECKOUT_INVALID) {
   });
 }
 
-test("checkout.orders.create: la idempotencyKey va en las opciones", async () => {
+test("connect.orders.create: la idempotencyKey va en las opciones", async () => {
   const api = new MockAPI();
   // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
-  const untyped = api.client(ACCESS_TOKEN).checkout.orders as any;
-  let error = await rejection(untyped.create({ items: CHECKOUT_ITEMS, idempotencyKey: "k" }));
+  const untyped = api.client(ACCESS_TOKEN).connect.orders as any;
+  let error = await rejection(untyped.create({ items: ORDER_ITEMS, idempotencyKey: "k" }));
   assert.ok(error instanceof TypeError);
   assert.match(error.message, /va en las opciones/);
-  error = await rejection(untyped.create({ items: CHECKOUT_ITEMS }, { idempotency_key: "k" }));
+  error = await rejection(untyped.create({ items: ORDER_ITEMS }, { idempotency_key: "k" }));
   assert.ok(error instanceof TypeError);
   assert.match(error.message, /¿quisiste decir idempotencyKey\?/);
   assert.deepEqual(api.requests, []);
 });
 
-test("checkout.orders.retrieve", async () => {
+test("connect.orders.retrieve", async () => {
   const api = new MockAPI();
-  api.add(200, CHECKOUT_SUCCEEDED);
-  const checkout = await api.client(ACCESS_TOKEN).checkout.orders.retrieve(CHECKOUT_ID);
-  assert.equal(checkout.status, "succeeded");
-  assert.equal(checkout.amount_received, 45000);
-  assert.equal(checkout.payer?.account, "0000123300602983525937");
+  api.add(200, ORDER_SUCCEEDED);
+  const order = await api.client(ACCESS_TOKEN).connect.orders.retrieve(ORDER_ID);
+  assert.equal(order.status, "succeeded");
+  assert.equal(order.amount_received, 45000);
+  assert.equal(order.payer?.account, "0000123300602983525937");
   assert.deepEqual(
     [api.last.method, api.last.url.pathname],
-    ["GET", `/v1/checkout/orders/${CHECKOUT_ID}`],
+    ["GET", `/v1/connect/orders/${ORDER_ID}`],
   );
-  api.addError(404, "CHECKOUT_NOT_FOUND", "No encontramos ese checkout.");
-  const error = await rejection(api.client(ACCESS_TOKEN).checkout.orders.retrieve(PAYMENT_ID));
+  api.addError(404, "ORDER_NOT_FOUND", "No encontramos ese pago.");
+  const error = await rejection(api.client(ACCESS_TOKEN).connect.orders.retrieve(PAYMENT_ID));
   assert.ok(error instanceof NotFoundError);
-  assert.equal(error.code, "CHECKOUT_NOT_FOUND");
+  assert.equal(error.code, "ORDER_NOT_FOUND");
 });
 
-test("checkout.orders.refund", async () => {
+test("connect.orders.refund", async () => {
   const api = new MockAPI();
-  api.add(200, CHECKOUT_REFUNDED);
-  const checkout = await api
+  api.add(200, ORDER_REFUNDED);
+  const order = await api
     .client(ACCESS_TOKEN)
-    .checkout.orders.refund(CHECKOUT_ID, { idempotencyKey: "reembolso-1" });
-  assert.equal(checkout.status, "refunded");
-  assert.equal(checkout.refunded_at, "2026-10-24T17:20:00Z");
+    .connect.orders.refund(ORDER_ID, { idempotencyKey: "reembolso-1" });
+  assert.equal(order.status, "refunded");
+  assert.equal(order.refunded_at, "2026-10-24T17:20:00Z");
   const request = api.last;
   assert.deepEqual(
     [request.method, request.url.pathname],
-    ["POST", `/v1/checkout/orders/${CHECKOUT_ID}/refund`],
+    ["POST", `/v1/connect/orders/${ORDER_ID}/refund`],
   );
   assert.equal(request.body, undefined); // el reembolso va sin body
   assert.equal(request.headers.get("content-type"), null);
@@ -614,15 +614,15 @@ test("los errores de la cuenta conectada", async () => {
   const api = new MockAPI();
   const client = api.client(ACCESS_TOKEN);
   api.addError(401, "ACCESS_TOKEN_REVOKED");
-  let error = await rejection(client.checkout.orders.create(CHECKOUT_PARAMS));
+  let error = await rejection(client.connect.orders.create(ORDER_PARAMS));
   assert.ok(error instanceof AuthenticationError);
   assert.equal(error.code, "ACCESS_TOKEN_REVOKED");
   api.addError(403, "CONNECTED_ACCOUNT_LOCKED", undefined, { reason: "kyc_required" });
-  error = await rejection(client.checkout.orders.create(CHECKOUT_PARAMS));
+  error = await rejection(client.connect.orders.create(ORDER_PARAMS));
   assert.ok(error instanceof PermissionDeniedError);
   assert.deepEqual(error.data, { reason: "kyc_required" });
   api.addError(403, "CONNECTED_ACCOUNT_NOT_CONFIGURED");
-  error = await rejection(client.checkout.orders.create(CHECKOUT_PARAMS));
+  error = await rejection(client.connect.orders.create(ORDER_PARAMS));
   assert.ok(error instanceof PermissionDeniedError);
   assert.equal(error.code, "CONNECTED_ACCOUNT_NOT_CONFIGURED");
   assert.equal(api.requests.length, 3); // los 4xx no se reintentan

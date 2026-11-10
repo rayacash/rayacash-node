@@ -126,13 +126,13 @@ export function userAgent(appInfo: AppInfo | null): string {
   return ua;
 }
 
-// Los prefijos que se conservan al enmascarar: la clave secreta y el access_token de una cuenta
-// conectada.
-const KEY_PREFIXES = ["raya_sk_live_", "raya_at_live_"];
+// Los prefijos que se conservan al enmascarar: la clave secreta, el access_token de una cuenta
+// conectada y el de la cuenta de prueba de una app (Developers › Apps › tu app › Test).
+const KEY_PREFIXES = ["raya_sk_live_", "raya_at_live_", "raya_at_test_"];
 
 /**
- * `raya_sk_live_…AbCd` (o `raya_at_live_…AbCd`): para inspect y logs. Nunca mostramos la clave
- * ni el access_token enteros.
+ * `raya_sk_live_…AbCd` (o `raya_at_live_…AbCd`, o `raya_at_test_…AbCd`): para inspect y logs.
+ * Nunca mostramos la clave ni el access_token enteros.
  */
 export function maskKey(key: string | null): string | null {
   if (!key) return null;

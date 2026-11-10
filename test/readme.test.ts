@@ -46,6 +46,32 @@ test("el ejemplo de tests sin red corre de verdad", async () => {
   await import(pathToFileURL(file).href); // no sale a la red: usa un fetch falso
 });
 
+test("el README y los ejemplos usan los nombres de Raya Connect, no los deprecados", () => {
+  // Los de la 1.1.0 (client.checkout, Checkout…) solo aparecen en la oración para quien viene de
+  // la 1.1.0, al final de «Raya Connect». Las guías para IA salen de este README.
+  const legacy =
+    /\bcheckout\.orders\b|\bclient\.checkout\b|\bCheckout(?:Status|\w*Params|\w*Service)?\b/;
+  BLOCKS.forEach((block, index) => {
+    assert.doesNotMatch(block, legacy, `bloque ${index}`);
+  });
+  for (const name of readdirSync(path.join(ROOT, "examples"))) {
+    assert.doesNotMatch(readFileSync(path.join(ROOT, "examples", name), "utf8"), legacy, name);
+  }
+  const lines = README.split("\n").filter((line) => legacy.test(line));
+  assert.equal(lines.length, 1, lines.join("\n"));
+  assert.ok(
+    lines[0]?.endsWith(
+      "Si venís de la 1.1.0: `client.checkout.orders` y `Checkout` siguen andando como alias " +
+        "deprecados hasta la 2.0.0; en código nuevo usá los nombres de arriba.",
+    ),
+  );
+  const connect = README.slice(
+    README.indexOf("\n## Raya Connect\n"),
+    README.indexOf("\n## Errores\n"),
+  );
+  assert.ok(connect.trimEnd().endsWith(lines[0] ?? "-"), "va al final de «Raya Connect»");
+});
+
 for (const folder of ["examples", "scripts"]) {
   for (const name of readdirSync(path.join(ROOT, folder)).filter((file) => file.endsWith(".mjs"))) {
     test(`${folder}/${name} compila`, () => {

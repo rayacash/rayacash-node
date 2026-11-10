@@ -6,10 +6,25 @@ import {
   type APIError,
   type Balance,
   type Checkout,
+  type CheckoutBackUrlsParams,
+  type CheckoutCreateParams,
+  type CheckoutItemParams,
+  type CheckoutOrdersService,
+  type CheckoutService,
+  type CheckoutStatus,
+  type ConnectOrder,
+  type ConnectOrderBackUrlsParams,
+  type ConnectOrderCreateParams,
+  type ConnectOrderItemParams,
+  type ConnectOrderService,
+  type ConnectOrderStatus,
+  type ConnectService,
   config,
   type Event,
+  type EventType,
   Balance as GlobalBalance,
   Checkout as GlobalCheckout,
+  ConnectOrder as GlobalConnectOrder,
   OAuth as GlobalOAuth,
   Payment as GlobalPayment,
   Transfer as GlobalTransfer,
@@ -74,7 +89,7 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   check(await payment.refund()).is<Payment>();
   check(await client.rawRequest("get", "/v1/balance")).is<RayaObject>();
 
-  // Apps y cuentas conectadas.
+  // Raya Connect.
   const token = await client.oauth.token({
     client_id: "7650337728110670",
     client_secret: "raya_cs_live_x",
@@ -109,27 +124,27 @@ export async function clientStyle(client: RayaClient): Promise<void> {
     }
   }
 
-  const checkout = await client.checkout.orders.create({
+  const order = await client.connect.orders.create({
     items: [{ title: "Pedido 1042", quantity: 1, unit_price: "45000.00" }],
     fee: 500,
     back_urls: { success: "https://tienda.example.com/pedidos/1042" },
     auto_return: "approved",
     expires_in: 3600,
   });
-  check(checkout).is<Checkout>();
-  check(checkout.status).is<"pending" | "succeeded" | "failed" | "expired" | "refunded">();
-  check(checkout.items).is<Checkout.Item[]>();
-  check(checkout.bank_transfer).is<Checkout.BankTransfer>();
-  check(checkout.back_urls).is<Checkout.BackUrls>();
-  check(checkout.payer).is<Checkout.Payer | null>();
-  check(checkout.metadata).is<Record<string, string>>();
-  check(await client.checkout.orders.retrieve("id")).is<Checkout>();
-  check(await client.checkout.orders.refund("id", { idempotencyKey: "r" })).is<Checkout>();
-  check(await checkout.refund()).is<Checkout>();
+  check(order).is<ConnectOrder>();
+  check(order.status).is<"pending" | "succeeded" | "failed" | "expired" | "refunded">();
+  check(order.items).is<ConnectOrder.Item[]>();
+  check(order.bank_transfer).is<ConnectOrder.BankTransfer>();
+  check(order.back_urls).is<ConnectOrder.BackUrls>();
+  check(order.payer).is<ConnectOrder.Payer | null>();
+  check(order.metadata).is<Record<string, string>>();
+  check(await client.connect.orders.retrieve("id")).is<ConnectOrder>();
+  check(await client.connect.orders.refund("id", { idempotencyKey: "r" })).is<ConnectOrder>();
+  check(await order.refund()).is<ConnectOrder>();
 
   const event = client.constructEvent(Buffer.from("{}"), "t=1,v1=x", "whsec_x");
   check(event).is<Event>();
-  check(event.data.object).is<Transfer | Payment | Checkout | RayaObject>();
+  check(event.data.object).is<Transfer | Payment | ConnectOrder | RayaObject>();
 
   // @ts-expect-error: la idempotencyKey es obligatoria en transfers.create.
   await client.transfers.create({ amount: 1, destination: "x" });
@@ -148,9 +163,9 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   const tokenOptions: OAuthTokenOptions = { timeout: 5_000, maxNetworkRetries: 0 };
   check(await client.oauth.token(grant, tokenOptions)).is<OAuthToken>();
   // @ts-expect-error: auto_return solo acepta "approved".
-  await client.checkout.orders.create({ items: [], auto_return: "all" });
+  await client.connect.orders.create({ items: [], auto_return: "all" });
   // @ts-expect-error: unit_price no acepta booleans.
-  await client.checkout.orders.create({ items: [{ title: "x", quantity: 1, unit_price: true }] });
+  await client.connect.orders.create({ items: [{ title: "x", quantity: 1, unit_price: true }] });
 }
 
 export async function globalStyle(): Promise<void> {
@@ -179,14 +194,71 @@ export async function globalStyle(): Promise<void> {
   // @ts-expect-error: tampoco en el estilo global: oauth.token no lleva Idempotency-Key.
   await GlobalOAuth.token(token, { idempotencyKey: "k" });
   check(await GlobalUser.retrieve(token.user_id)).is<User>();
-  const checkout = await GlobalCheckout.create({
+  const order = await GlobalConnectOrder.create({
     items: [{ title: "Pedido 1042", quantity: 1, unit_price: 45000 }],
   });
+  check(order).is<ConnectOrder>();
+  check(await GlobalConnectOrder.retrieve("id")).is<ConnectOrder>();
+  check(await GlobalConnectOrder.refund("id")).is<ConnectOrder>();
+  check(await order.refund()).is<ConnectOrder>();
+  check(GlobalConnectOrder.constructFrom({ object: "connect.order" })).is<ConnectOrder>();
+}
+
+// Los nombres de la 1.1.0, deprecados hasta la 2.0.0: el código escrito para la 1.1.0 tiene que
+// seguir compilando, con los mismos tipos que los nombres de Raya Connect.
+export async function deprecatedAliases(client: RayaClient, event: Event): Promise<void> {
+  check(client.checkout).is<ConnectService>();
+  check(client.checkout).is<CheckoutService>();
+  // De solo lectura, como en la 1.1.0: el setter (para el JavaScript que lo reasignaba) no está en
+  // el tipo.
+  // @ts-expect-error: checkout es de solo lectura.
+  client.checkout = client.connect;
+  check(client.checkout.orders).is<ConnectOrderService>();
+  check(client.checkout.orders).is<CheckoutOrdersService>();
+  check<typeof GlobalCheckout>().is<typeof GlobalConnectOrder>();
+  check<Checkout>().is<ConnectOrder>();
+  check<Checkout.Item>().is<ConnectOrder.Item>();
+  check<Checkout.BankTransfer>().is<ConnectOrder.BankTransfer>();
+  check<Checkout.BackUrls>().is<ConnectOrder.BackUrls>();
+  check<Checkout.Payer>().is<ConnectOrder.Payer>();
+  check<CheckoutStatus>().is<ConnectOrderStatus>();
+  check<CheckoutCreateParams>().is<ConnectOrderCreateParams>();
+  check<CheckoutItemParams>().is<ConnectOrderItemParams>();
+  check<CheckoutBackUrlsParams>().is<ConnectOrderBackUrlsParams>();
+  // Los servicios van solo como tipos, como en la 1.1.0, y `typeof` sigue andando.
+  check<InstanceType<typeof CheckoutService>>().is<ConnectService>();
+  check<InstanceType<typeof CheckoutOrdersService>>().is<ConnectOrderService>();
+
+  // Como en el README de la 1.1.0.
+  const item: CheckoutItemParams = { title: "Pedido 1042", quantity: 1, unit_price: 45000 };
+  const backUrls: CheckoutBackUrlsParams = { success: "https://tienda.example.com/pedidos/1042" };
+  const params: CheckoutCreateParams = { items: [item], fee: 500, back_urls: backUrls };
+  const checkout = await client.checkout.orders.create(params, { idempotencyKey: "k" });
   check(checkout).is<Checkout>();
+  check(checkout.status).is<CheckoutStatus>();
+  check(checkout.items).is<Checkout.Item[]>();
+  check(checkout.bank_transfer).is<Checkout.BankTransfer>();
+  check(checkout.back_urls).is<Checkout.BackUrls>();
+  check(checkout.payer).is<Checkout.Payer | null>();
+  // "checkout" sigue siendo un `object` posible: el de un webhook de antes del cambio de nombre.
+  check(checkout.object).is<"connect.order" | "checkout">();
+  check(await client.checkout.orders.retrieve(checkout.id)).is<Checkout>();
+  check(await client.checkout.orders.refund(checkout.id, { idempotencyKey: "r" })).is<Checkout>();
+  check(await checkout.refund()).is<Checkout>();
+  check(await GlobalCheckout.create(params)).is<Checkout>();
   check(await GlobalCheckout.retrieve("id")).is<Checkout>();
   check(await GlobalCheckout.refund("id")).is<Checkout>();
-  check(await checkout.refund()).is<Checkout>();
-  check(GlobalCheckout.constructFrom({ object: "checkout" })).is<Checkout>();
+  check(GlobalCheckout.constructFrom({ object: "checkout" })).is<ConnectOrder>();
+
+  // instanceof anda con los dos nombres.
+  const object = event.data.object;
+  if (object instanceof GlobalCheckout) check(object).is<ConnectOrder>();
+  if (object instanceof GlobalConnectOrder) check(object).is<Checkout>();
+  // Los checkout.* siguen en EventType para que esto compile, aunque la API ya no los emite.
+  check<Extract<EventType, `checkout.${string}`>>().is<
+    "checkout.created" | "checkout.succeeded" | "checkout.failed" | "checkout.refunded"
+  >();
+  if (event.type === "checkout.succeeded") check(event.type).is<"checkout.succeeded">();
 }
 
 export function errors(error: RayaError, apiError: APIError, invalid: InvalidRequestError): void {

@@ -49,8 +49,8 @@ function defaults(): GlobalConfig {
 
 /**
  * La configuración del estilo global: `Balance`, `Transfer`, `Payment`, `OAuth`, `User` y
- * `Checkout` la leen en cada request, así que cambiarla entre llamadas surte efecto enseguida. Está sellada: asignar una opción que no
- * existe (`config.apikey`) falla en vez de no hacer nada.
+ * `ConnectOrder` la leen en cada request, así que cambiarla entre llamadas surte efecto enseguida.
+ * Está sellada: asignar una opción que no existe (`config.apikey`) falla en vez de no hacer nada.
  *
  * ```js
  * import { config, Payment } from "rayacash";

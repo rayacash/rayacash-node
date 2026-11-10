@@ -3,7 +3,7 @@ import { test } from "node:test";
 import util from "node:util";
 
 import {
-  Checkout,
+  ConnectOrder,
   Event,
   ListObject,
   OAuthToken,
@@ -15,12 +15,13 @@ import {
 import { convertValue } from "../src/rayaObject.ts";
 import {
   ACCESS_TOKEN,
-  CHECKOUT_SUCCEEDED,
-  EVENT_CHECKOUT_SUCCEEDED,
+  EVENT_ORDER_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
   OAUTH_TOKEN,
+  ORDER_SUCCEEDED,
   PAYMENT_PENDING,
   PAYMENT_SUCCEEDED,
+  TEST_MODE_ACCESS_TOKEN,
   TRANSFER_INBOUND,
   TRANSFER_LIST,
   USER,
@@ -149,18 +150,18 @@ test("una ListObject sin data", () => {
   assert.deepEqual([...page], []);
 });
 
-test("un checkout: ítems y back_urls planos, metadata tuya", () => {
-  const checkout = convert(CHECKOUT_SUCCEEDED);
-  assert.equal(checkout.constructor, Checkout);
-  assert.equal(checkout.net_amount, 44500);
-  assert.equal(checkout.items[0].unit_price, 45000);
-  assert.equal(Object.getPrototypeOf(checkout.items[0]), Object.prototype);
-  assert.equal(checkout.back_urls.failure, "https://tienda.example.com/pedidos/1042/error");
-  assert.equal(checkout.payer.name, "María Ejemplo");
-  assert.equal(Object.getPrototypeOf(checkout.metadata), Object.prototype);
-  assert.deepEqual(JSON.parse(JSON.stringify(checkout)), CHECKOUT_SUCCEEDED);
-  assert.deepEqual(Object.keys(checkout), Object.keys(CHECKOUT_SUCCEEDED));
-  assert.ok(util.inspect(checkout).startsWith("Checkout {"));
+test("un pago de Connect: ítems y back_urls planos, metadata tuya", () => {
+  const order = convert(ORDER_SUCCEEDED);
+  assert.equal(order.constructor, ConnectOrder);
+  assert.equal(order.net_amount, 44500);
+  assert.equal(order.items[0].unit_price, 45000);
+  assert.equal(Object.getPrototypeOf(order.items[0]), Object.prototype);
+  assert.equal(order.back_urls.failure, "https://tienda.example.com/pedidos/1042/error");
+  assert.equal(order.payer.name, "María Ejemplo");
+  assert.equal(Object.getPrototypeOf(order.metadata), Object.prototype);
+  assert.deepEqual(JSON.parse(JSON.stringify(order)), ORDER_SUCCEEDED);
+  assert.deepEqual(Object.keys(order), Object.keys(ORDER_SUCCEEDED));
+  assert.ok(util.inspect(order).startsWith("ConnectOrder {"));
 });
 
 test("un usuario y sus sub-objetos", () => {
@@ -224,9 +225,21 @@ test("console.log de un OAuthToken enmascara el access_token", () => {
   assert.equal(util.inspect(empty), "OAuthToken { object: 'oauth_token' }");
 });
 
-test("un evento checkout.* hidrata un Checkout", () => {
-  const event = Event.constructFrom(EVENT_CHECKOUT_SUCCEEDED);
-  assert.equal(event.type, "checkout.succeeded");
-  assert.equal(event.data.object.constructor, Checkout);
-  assert.equal((event.data.object as Checkout).fee, 500);
+test("console.log de un OAuthToken de prueba lo enmascara con su prefijo", () => {
+  // El de la cuenta de prueba de una app (raya_at_test_…): la misma máscara, con su prefijo.
+  const fields = { ...OAUTH_TOKEN, access_token: TEST_MODE_ACCESS_TOKEN };
+  const token = convert(fields);
+  assert.equal(token.constructor, OAuthToken);
+  assert.equal(token.access_token, TEST_MODE_ACCESS_TOKEN);
+  const shown = util.inspect(token);
+  assert.match(shown, /access_token: 'raya_at_test_…L0sA'/);
+  assert.ok(!shown.includes(TEST_MODE_ACCESS_TOKEN));
+  assert.deepEqual(token.toJSON(), fields); // para guardarlo, entero
+});
+
+test("un evento connect.order.* hidrata un ConnectOrder", () => {
+  const event = Event.constructFrom(EVENT_ORDER_SUCCEEDED);
+  assert.equal(event.type, "connect.order.succeeded");
+  assert.equal(event.data.object.constructor, ConnectOrder);
+  assert.equal((event.data.object as ConnectOrder).fee, 500);
 });

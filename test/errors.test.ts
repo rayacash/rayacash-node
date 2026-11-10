@@ -48,7 +48,7 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["PAYMENT_NOT_FOUND", 404, NotFoundError],
   ["NOT_FOUND", 404, NotFoundError],
   ["USER_NOT_FOUND", 404, NotFoundError],
-  ["CHECKOUT_NOT_FOUND", 404, NotFoundError],
+  ["ORDER_NOT_FOUND", 404, NotFoundError],
   ["METHOD_NOT_ALLOWED", 405, InvalidRequestError],
   ["IDEMPOTENCY_KEY_REUSED", 409, IdempotencyError],
   ["IDEMPOTENCY_KEY_IN_USE", 409, IdempotencyError],

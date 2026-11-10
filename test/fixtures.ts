@@ -129,7 +129,7 @@ export const WEBHOOK_OLD_SECRET = "whsec_old_0a9d";
 export const WEBHOOK_OLD_SIGNATURE =
   "8e449e40286c1e331a636dd9e38ab4a548c3c9a09733fa05205d7a10623ecc45";
 
-// Apps y cuentas conectadas (api.md › Checkout y Usuarios): la app Tienda Ejemplo cobra a nombre
+// Raya Connect (api.md › Connect y Usuarios): la app Tienda Ejemplo cobra a nombre
 // del comercio conectado Almacén Ejemplo, con una comisión de 500 sobre un ítem de 45000.
 export const CLIENT_ID = "7650337728110670";
 export const CLIENT_SECRET = "raya_cs_live_Qx9Km2Pr4Tv6Wy8Za1Bc3De5Fg7Hj0KnLm2Np4Qr6St8Uv0W";
@@ -137,12 +137,15 @@ export const OAUTH_CODE = "c0d3ejemploQx9Km2Pr4Tv6Wy8Za1Bc3De5Fg7Hj0Kn";
 export const REDIRECT_URI = "https://tienda.example.com/raya/callback";
 export const USER_ID = "9d4f2b7e-3c61-4e0a-9b8f-2a5c7d1e6f40";
 export const ACCESS_TOKEN = "raya_at_live_4mQ8sT2vX7bN1kR5wZ9cH3jLpD6fG0aEyU8iO2pA5sD7fG9h";
+// El access_token de la cuenta de prueba de la app (Developers › Apps › tu app › Test): el prefijo
+// de prueba, el client_id y 32 caracteres base62. Sintético, como los demás.
+export const TEST_MODE_ACCESS_TOKEN = `raya_at_test_${CLIENT_ID}pR5tZ9cW4yD3fN8kQ2vX7mB1hJ6gL0sA`;
 
 export const OAUTH_TOKEN = {
   object: "oauth_token",
   access_token: ACCESS_TOKEN,
   token_type: "Bearer",
-  scope: "checkout profile",
+  scope: "orders profile",
   user_id: USER_ID,
   expires_in: null,
   refresh_token: null,
@@ -179,30 +182,30 @@ export const USER = {
   created_at: "2026-10-24T15:30:12Z",
 };
 
-export const CHECKOUT_ID = "e7b3a9c2-4d1f-4a8e-b6c0-5f2d9e8a7b61";
+export const ORDER_ID = "e7b3a9c2-4d1f-4a8e-b6c0-5f2d9e8a7b61";
 export const NOTIFICATION_URL = "we_3fN8kQ2vX7mB1pR5tZ9cW4yD";
-export const CHECKOUT_ITEMS = [{ title: "Pedido 1042", quantity: 1, unit_price: 45000 }];
-export const CHECKOUT_BACK_URLS = {
+export const ORDER_ITEMS = [{ title: "Pedido 1042", quantity: 1, unit_price: 45000 }];
+export const ORDER_BACK_URLS = {
   success: "https://tienda.example.com/pedidos/1042",
   failure: "https://tienda.example.com/pedidos/1042/error",
 };
 
-export const CHECKOUT_PENDING = {
-  id: CHECKOUT_ID,
-  object: "checkout",
+export const ORDER_PENDING = {
+  id: ORDER_ID,
+  object: "connect.order",
   status: "pending",
   amount: 45000,
   fee: 500,
   net_amount: 44500,
   amount_received: null,
   currency: "ARS",
-  items: CHECKOUT_ITEMS,
+  items: ORDER_ITEMS,
   description: "Pedido 1042",
   external_reference: "pedido-1042",
   account: USER_ID,
   bank_transfer: { cvu: "0000123390456538582824", alias: "raya.cash.ejemplo" },
-  checkout_url: `https://raya.cash/checkout/${CHECKOUT_ID}`,
-  back_urls: CHECKOUT_BACK_URLS,
+  checkout_url: `https://raya.cash/checkout/${ORDER_ID}`,
+  back_urls: ORDER_BACK_URLS,
   auto_return: "approved",
   notification_url: NOTIFICATION_URL,
   payer: null,
@@ -214,8 +217,8 @@ export const CHECKOUT_PENDING = {
   created_at: "2026-10-24T16:00:00Z",
 };
 
-export const CHECKOUT_SUCCEEDED = {
-  ...CHECKOUT_PENDING,
+export const ORDER_SUCCEEDED = {
+  ...ORDER_PENDING,
   status: "succeeded",
   amount_received: 45000,
   payer: {
@@ -226,17 +229,17 @@ export const CHECKOUT_SUCCEEDED = {
   paid_at: "2026-10-24T16:07:41Z",
 };
 
-export const CHECKOUT_REFUNDED = {
-  ...CHECKOUT_SUCCEEDED,
+export const ORDER_REFUNDED = {
+  ...ORDER_SUCCEEDED,
   status: "refunded",
   refunded_at: "2026-10-24T17:20:00Z",
 };
 
-export const EVENT_CHECKOUT_SUCCEEDED = {
+export const EVENT_ORDER_SUCCEEDED = {
   id: "evt_7kP2mW9xB4nT1rV6yZ3cQ8jH",
   object: "event",
-  type: "checkout.succeeded",
+  type: "connect.order.succeeded",
   api_version: "2026-10-23",
   created_at: "2026-10-24T16:07:41Z",
-  data: { object: CHECKOUT_SUCCEEDED },
+  data: { object: ORDER_SUCCEEDED },
 };

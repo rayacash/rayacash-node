@@ -2,7 +2,7 @@
 // no está acá queda como RayaObject.
 
 import "./balance.ts";
-import "./checkout.ts";
+import "./connectOrder.ts";
 import "./event.ts";
 import "./listObject.ts";
 import "./oauthToken.ts";

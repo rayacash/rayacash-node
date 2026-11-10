@@ -1,6 +1,7 @@
 import { BalanceService } from "./balanceService.ts";
-import { CheckoutService } from "./checkoutService.ts";
 import { DEFAULT_API_BASE, DEFAULT_MAX_NETWORK_RETRIES, DEFAULT_TIMEOUT } from "./config.ts";
+import { ConnectService } from "./connectService.ts";
+import { warnDeprecated } from "./deprecated.ts";
 import { checkParams, encodeQuery, isPlainObject, typeName } from "./encoding.ts";
 import type { Event } from "./event.ts";
 import { ListObject, setRetrieveContext } from "./listObject.ts";
@@ -149,7 +150,7 @@ function splitArguments(
  * navegador, en una app mobile ni en el repositorio.
  *
  * Para cobrar a nombre de una cuenta que conectó tu app, el cliente se arma con su access_token
- * (`new RayaClient(token.access_token)`): `client.checkout` y `client.users` usan ese token;
+ * (`new RayaClient(token.access_token)`): `client.connect` y `client.users` usan ese token;
  * `client.oauth.token()` lo consigue y no necesita clave.
  */
 export class RayaClient {
@@ -160,8 +161,8 @@ export class RayaClient {
   readonly oauth: OAuthService;
   /** Los datos de la cuenta conectada (con su access_token). */
   readonly users: UserService;
-  /** Los checkouts a nombre de la cuenta conectada (con su access_token). */
-  readonly checkout: CheckoutService;
+  /** Raya Connect: los pagos a nombre de la cuenta conectada (con su access_token). */
+  readonly connect: ConnectService;
 
   readonly #config: ClientConfig;
   readonly #requestor: APIRequestor;
@@ -207,7 +208,21 @@ export class RayaClient {
     this.payments = new PaymentService(this.#requestor);
     this.oauth = new OAuthService(this.#requestor);
     this.users = new UserService(this.#requestor);
-    this.checkout = new CheckoutService(this.#requestor);
+    this.connect = new ConnectService(this.#requestor);
+  }
+
+  /**
+   * @deprecated Desde la 1.2.0 se llama `client.connect`: es el mismo objeto, así que
+   * `client.checkout.orders` es `client.connect.orders` y llama a `/v1/connect/orders`. Avisa una
+   * vez por proceso con un `DeprecationWarning`. Se va en la 2.0.0.
+   */
+  get checkout(): ConnectService {
+    warnDeprecated(
+      "RAYACASH_DEP_CHECKOUT",
+      "client.checkout está deprecado: usá client.connect, que es el mismo objeto. Se elimina en " +
+        "rayacash 2.0.0.",
+    );
+    return this.connect;
   }
 
   /**
@@ -262,6 +277,23 @@ export class RayaClient {
     return { apiBase: this.#config.apiBase(), apiKey: maskKey(this.#config.apiKey()) };
   }
 }
+
+// En la 1.1.0, `checkout` era una propiedad propia de cada cliente y desde JavaScript se podía
+// reasignar (`client.checkout = mock`, en los tests de una integración). Este setter lo sigue
+// permitiendo: lo asignado queda como esa propiedad propia (escribible, configurable y enumerable,
+// como en la 1.1.0), que tapa al getter, así que las lecturas siguientes lo devuelven, sin aviso.
+// Va acá y no en la clase para que TypeScript la siga viendo de solo lectura, como la declaraba la
+// 1.1.0. Redefinir solo `set` conserva el getter de la clase y sus atributos.
+Object.defineProperty(RayaClient.prototype, "checkout", {
+  set(this: RayaClient, value: unknown): void {
+    Object.defineProperty(this, "checkout", {
+      value,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  },
+});
 
 Object.defineProperty(RayaClient.prototype, INSPECT, {
   value(

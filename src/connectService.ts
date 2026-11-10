@@ -1,4 +1,4 @@
-import type { Checkout } from "./checkout.ts";
+import type { ConnectOrder } from "./connectOrder.ts";
 import {
   type Amount,
   canonicalAmount,
@@ -11,7 +11,7 @@ import type { PostRequestOptions, RequestOptions } from "./requestOptions.ts";
 import type { APIRequestor } from "./requestor.ts";
 
 /** Un ítem de lo que se cobra. */
-export interface CheckoutItemParams {
+export interface ConnectOrderItemParams {
   /** Qué es (hasta 255 caracteres, en una línea). Se muestra en la página de pago. */
   title: string;
   /** Cuántos: un entero de 1 a 999. */
@@ -21,19 +21,19 @@ export interface CheckoutItemParams {
 }
 
 /** A dónde vuelve quien paga desde `checkout_url`. */
-export interface CheckoutBackUrlsParams {
+export interface ConnectOrderBackUrlsParams {
   /** Después de pagar. */
   success?: string | null;
   /** Si el pago falla o vence. */
   failure?: string | null;
 }
 
-export interface CheckoutCreateParams {
+export interface ConnectOrderCreateParams {
   /**
    * De 1 a 20 ítems. El total (la suma de `quantity` × `unit_price`, hasta 99999999.99) es lo que
    * tiene que transferir quien paga.
    */
-  items: CheckoutItemParams[];
+  items: ConnectOrderItemParams[];
   /**
    * Tu comisión en pesos, menor que el total: un monto, no un porcentaje. La retenemos del pago y
    * la liquidamos a tu cuenta. Por defecto, 0.
@@ -49,17 +49,17 @@ export interface CheckoutCreateParams {
   /** Hasta 20 pares clave-valor de texto. */
   metadata?: Record<string, string> | null;
   /** `success` y `failure`: a dónde vuelve quien paga desde `checkout_url`. */
-  back_urls?: CheckoutBackUrlsParams | null;
+  back_urls?: ConnectOrderBackUrlsParams | null;
   /** `"approved"`: al acreditarse, mandamos solos a quien paga a `back_urls.success`. */
   auto_return?: "approved" | null;
   /**
-   * El destino de Developers › Webhooks de tu cuenta para los `checkout.*` de este checkout: su id
-   * (`we_…`) o su URL exacta. Sin él, van a los destinos suscriptos a `checkout.*`.
+   * El destino de Developers › Webhooks de tu cuenta para los `connect.order.*` de este pago: su
+   * id (`we_…`) o su URL exacta. Sin él, van a los destinos suscriptos a `connect.order.*`.
    */
   notification_url?: string | null;
   /**
    * Cuántos segundos se puede pagar, de 300 (5 minutos) a 864000 (10 días). Por defecto, el
-   * plazo del comercio conectado (24 horas salvo que lo haya cambiado). Cada checkout `pending`
+   * plazo del comercio conectado (24 horas salvo que lo haya cambiado). Cada pago `pending`
    * ocupa un CVU del comercio: no lo alargues más de lo necesario.
    */
   expires_in?: number | null;
@@ -120,7 +120,7 @@ function backUrlsBody(backUrls: unknown): Record<string, unknown> | undefined {
 }
 
 function createBody(params: unknown): Record<string, unknown> {
-  const values = checkParams("checkout.orders.create", params, CREATE_PARAMS);
+  const values = checkParams("connect.orders.create", params, CREATE_PARAMS);
   const metadata = values.metadata;
   if (metadata !== undefined && metadata !== null && !isPlainObject(metadata)) {
     throw new TypeError(
@@ -141,12 +141,12 @@ function createBody(params: unknown): Record<string, unknown> {
   };
 }
 
-function checkoutPath(checkoutId: string): string {
-  return `/v1/checkout/orders/${pathId("checkoutId", checkoutId)}`;
+function orderPath(orderId: string): string {
+  return `/v1/connect/orders/${pathId("orderId", orderId)}`;
 }
 
-/** `client.checkout.orders`: los checkouts a nombre de una cuenta conectada. */
-export class CheckoutOrdersService {
+/** `client.connect.orders`: los pagos a nombre de una cuenta conectada. */
+export class ConnectOrderService {
   readonly #requestor: APIRequestor;
 
   constructor(requestor: APIRequestor) {
@@ -154,69 +154,75 @@ export class CheckoutOrdersService {
   }
 
   /**
-   * Crea un checkout `pending` a nombre de la cuenta conectada del access_token, con un CVU y un
-   * alias exclusivos (`POST /v1/checkout/orders`).
+   * Crea un pago `pending` a nombre de la cuenta conectada del access_token, con un CVU y un
+   * alias exclusivos (`POST /v1/connect/orders`).
    *
    * Mandá a quien paga a `checkout_url` (nuestra página, con el nombre y la imagen del comercio
    * conectado), o mostrale `bank_transfer.cvu` y `bank_transfer.alias`. Te avisamos con
-   * `checkout.succeeded` cuando llega la transferencia: lo recibido menos `fee` se liquida al
+   * `connect.order.succeeded` cuando llega la transferencia: lo recibido menos `fee` se liquida al
    * comercio conectado y `fee`, a tu cuenta. Puede tardar hasta 40 s si damos de alta un CVU nuevo
    * (el timeout por defecto es de 65 s).
    *
    * La `idempotencyKey` es opcional pero recomendada: guardala con el pedido y reusala si
    * reintentás. Si no la pasás, generamos una que protege los reintentos de esta llamada.
    */
-  async create(params: CheckoutCreateParams, options?: PostRequestOptions): Promise<Checkout> {
+  async create(
+    params: ConnectOrderCreateParams,
+    options?: PostRequestOptions,
+  ): Promise<ConnectOrder> {
     const body = createBody(params);
     return (await this.#requestor.request(
       "POST",
-      "/v1/checkout/orders",
+      "/v1/connect/orders",
       { body },
       options,
-      "checkout",
-    )) as Checkout;
+      "connect.order",
+    )) as ConnectOrder;
   }
 
   /**
-   * Un checkout de tu app a nombre de esa cuenta (`GET /v1/checkout/orders/:id`). Los de otras
-   * cuentas conectadas dan `NotFoundError` con `code === "CHECKOUT_NOT_FOUND"`.
+   * Un pago de tu app a nombre de esa cuenta (`GET /v1/connect/orders/:id`). Los de otras
+   * cuentas conectadas dan `NotFoundError` con `code === "ORDER_NOT_FOUND"`.
    */
-  async retrieve(checkoutId: string, options?: RequestOptions): Promise<Checkout> {
+  async retrieve(orderId: string, options?: RequestOptions): Promise<ConnectOrder> {
     return (await this.#requestor.request(
       "GET",
-      checkoutPath(checkoutId),
+      orderPath(orderId),
       {},
       options,
-      "checkout",
-    )) as Checkout;
+      "connect.order",
+    )) as ConnectOrder;
   }
 
   /**
    * Devuelve todo lo recibido a la cuenta desde la que se pagó y revierte tu comisión
-   * (`POST /v1/checkout/orders/:id/refund`).
+   * (`POST /v1/connect/orders/:id/refund`).
    *
-   * Solo checkouts `succeeded`, hasta 30 días después de `paid_at`. Es total: no hay reembolsos
+   * Solo pagos `succeeded`, hasta 30 días después de `paid_at`. Es total: no hay reembolsos
    * parciales. Si la confirmación tarda, sale `APIError` con `code === "BANK_UNAVAILABLE"`:
    * reintentá más tarde con la misma `idempotencyKey` (nunca se manda dos veces) o esperá el
-   * webhook `checkout.refunded`.
+   * webhook `connect.order.refunded`.
    */
-  async refund(checkoutId: string, options?: PostRequestOptions): Promise<Checkout> {
+  async refund(orderId: string, options?: PostRequestOptions): Promise<ConnectOrder> {
     return (await this.#requestor.request(
       "POST",
-      `${checkoutPath(checkoutId)}/refund`,
+      `${orderPath(orderId)}/refund`,
       {},
       options,
-      "checkout",
-    )) as Checkout;
+      "connect.order",
+    )) as ConnectOrder;
   }
 }
 
-/** `client.checkout`: cobrar a nombre de las cuentas que conectaron tu app, con tu comisión. */
-export class CheckoutService {
-  /** `client.checkout.orders.create/retrieve/refund`. */
-  readonly orders: CheckoutOrdersService;
+/**
+ * `client.connect`: Raya Connect, para cobrar a nombre de las cuentas que conectaron tu app, con
+ * tu comisión.
+ */
+export class ConnectService {
+  /** `client.connect.orders.create/retrieve/refund`. */
+  readonly orders: ConnectOrderService;
 
   constructor(requestor: APIRequestor) {
-    this.orders = new CheckoutOrdersService(requestor);
+    this.orders = new ConnectOrderService(requestor);
   }
 }

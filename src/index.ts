@@ -14,29 +14,39 @@
 //   config.apiKey = process.env.RAYA_SECRET_KEY;
 //   const payment = await Payment.create({ amount: 15000 });
 //
-// Apps y cuentas conectadas (cobrar a nombre de otra cuenta, con tu comisión):
+// Raya Connect, apps y cuentas conectadas (cobrar a nombre de otra cuenta, con tu comisión):
 //
 //   const token = await client.oauth.token({ client_id, client_secret, code, redirect_uri });
 //   const connected = new RayaClient(token.access_token);
-//   const checkout = await connected.checkout.orders.create({ items, fee: 500 });
+//   const order = await connected.connect.orders.create({ items, fee: 500 });
 //
 // Referencia de la API: https://raya.cash/api
 
 export { Balance } from "./balance.ts";
 export type { BalanceService } from "./balanceService.ts";
-export type { CheckoutStatus } from "./checkout.ts";
-export { Checkout } from "./checkout.ts";
+export type { RawRequestParams, RayaClientOptions } from "./client.ts";
+export { RayaClient } from "./client.ts";
+export type { GlobalConfig } from "./config.ts";
+export { config, DEFAULT_API_BASE } from "./config.ts";
+export type { ConnectOrderStatus } from "./connectOrder.ts";
+export { ConnectOrder } from "./connectOrder.ts";
+export type {
+  ConnectOrderBackUrlsParams,
+  ConnectOrderCreateParams,
+  ConnectOrderItemParams,
+  ConnectOrderService,
+  ConnectService,
+} from "./connectService.ts";
+// Los nombres de la 1.1.0, deprecados hasta la 2.0.0: ver deprecated.ts.
 export type {
   CheckoutBackUrlsParams,
   CheckoutCreateParams,
   CheckoutItemParams,
   CheckoutOrdersService,
   CheckoutService,
-} from "./checkoutService.ts";
-export type { RawRequestParams, RayaClientOptions } from "./client.ts";
-export { RayaClient } from "./client.ts";
-export type { GlobalConfig } from "./config.ts";
-export { config, DEFAULT_API_BASE } from "./config.ts";
+  CheckoutStatus,
+} from "./deprecated.ts";
+export { Checkout } from "./deprecated.ts";
 export type { Amount, DecimalLike } from "./encoding.ts";
 export type { RayaErrorOptions } from "./errors.ts";
 export {
