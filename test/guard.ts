@@ -1,4 +1,5 @@
-// Ningún test puede llamar a la API real: no hay sandbox y cada request mueve plata.
+// Ningún test puede llamar a la API real: con una clave real, cada request mueve plata. Tampoco
+// a un sandbox: los tests del SDK corren sin red, con MockAPI.
 //
 // Se precarga en cada proceso de test (node --import ./test/guard.ts). Reemplaza el fetch global
 // por uno que falla y deja abrir sockets solo contra loopback: transport.test.ts usa el fetch real

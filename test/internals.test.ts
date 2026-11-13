@@ -55,3 +55,27 @@ test("la versión es la de package.json y va en el User-Agent", () => {
   assert.equal(VERSION, pkg.version);
   assert.match(VERSION, /^\d+\.\d+\.\d+$/);
 });
+
+test("la versión es la misma en el lock, el README y el CHANGELOG, y es nueva", () => {
+  const read = (file: string) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+  const lock = JSON.parse(read("package-lock.json"));
+  assert.equal(lock.version, VERSION);
+  assert.equal(lock.packages[""].version, VERSION);
+  // El README es la página de npm: su «Versión X.Y.Z.» y el User-Agent de ejemplo.
+  const readme = read("README.md");
+  assert.ok(readme.includes(`\nVersión ${VERSION}. `));
+  const agents = [...readme.matchAll(/rayacash-node\/(\d+\.\d+\.\d+)/g)].map((match) => match[1]);
+  assert.ok(agents.length > 0);
+  assert.deepEqual(new Set(agents), new Set([VERSION]));
+  // La primera entrada del CHANGELOG es esta versión, más nueva que todas las publicadas: una
+  // versión publicada no se vuelve a publicar.
+  const entries = [...read("CHANGELOG.md").matchAll(/^## (\d+)\.(\d+)\.(\d+)$/gm)].map((match) =>
+    match.slice(1, 4).map(Number),
+  );
+  assert.equal(entries[0]?.join("."), VERSION);
+  for (let index = 1; index < entries.length; index += 1) {
+    const [newer = [], older = []] = [entries[index - 1], entries[index]];
+    const order = newer.findIndex((part, at) => part !== older[at]);
+    assert.ok(order >= 0 && (newer[order] ?? 0) > (older[order] ?? 0), older.join("."));
+  }
+});

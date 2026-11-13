@@ -1,4 +1,4 @@
-// El estilo global: config.apiKey + Payment.create(…), OAuth.token(…), Checkout.create(…).
+// El estilo global: config.apiKey + Payment.create(…), OAuth.token(…), ConnectOrder.create(…).
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -7,8 +7,11 @@ import {
   APIError,
   AuthenticationError,
   Balance,
-  Checkout,
+  ConnectOrder,
+  ConnectPayout,
   config,
+  IdentityVerification,
+  IdentityVerificationFiles,
   ListObject,
   OAuth,
   OAuthToken,
@@ -22,27 +25,45 @@ import {
 import {
   ACCESS_TOKEN,
   BALANCE,
-  CHECKOUT_ID,
-  CHECKOUT_ITEMS,
-  CHECKOUT_PENDING,
-  CHECKOUT_REFUNDED,
-  CHECKOUT_SUCCEEDED,
   CLIENT_ID,
   CLIENT_SECRET,
-  EVENT_CHECKOUT_SUCCEEDED,
+  EVENT_ORDER_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
+  EVENT_VERIFICATION_VERIFIED,
   OAUTH_CODE,
   OAUTH_TOKEN,
+  ORDER_ID,
+  ORDER_ITEMS,
+  ORDER_PENDING,
+  ORDER_REFUNDED,
+  ORDER_SUCCEEDED,
   PAYMENT_ID,
   PAYMENT_PENDING,
   PAYMENT_REFUNDED,
   PAYMENT_SUCCEEDED,
+  PAYOUT_COMPLETED,
+  PAYOUT_DESTINATION,
+  PAYOUT_ID,
+  PAYOUT_LIST,
+  PAYOUT_PENDING,
   REDIRECT_URI,
+  SANDBOX_ORDER_ID,
+  SANDBOX_ORDER_SUCCEEDED,
+  SANDBOX_PAYMENT_FAILED,
+  SANDBOX_PAYMENT_ID,
+  SANDBOX_PAYMENT_SUCCEEDED,
+  SANDBOX_SECRET_KEY,
   TRANSFER_INBOUND,
   TRANSFER_LIST,
   TRANSFER_OUTBOUND_PENDING,
   USER,
   USER_ID,
+  VERIFICATION_CANCELED,
+  VERIFICATION_FILES,
+  VERIFICATION_ID,
+  VERIFICATION_LIST,
+  VERIFICATION_PENDING,
+  VERIFICATION_VERIFIED,
   WEBHOOK_SECRET,
 } from "./fixtures.ts";
 import { isolate, MockAPI, OTHER_KEY, rejection, TEST_KEY, thrown } from "./helpers.ts";
@@ -222,7 +243,7 @@ test("los valores inválidos de config fallan en la request", async () => {
   assert.ok((await rejection(Balance.retrieve())) instanceof RangeError);
 });
 
-// --- Apps y cuentas conectadas ----------------------------------------------------------------
+// --- Raya Connect -----------------------------------------------------------------------------
 
 const TOKEN_PARAMS = {
   client_id: CLIENT_ID,
@@ -246,19 +267,19 @@ test("los endpoints de apps y cuentas conectadas", async () => {
   assert.equal(api.last.url.pathname, `/v1/users/${USER_ID}`);
   assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
 
-  api.add(201, CHECKOUT_PENDING);
-  const checkout = await Checkout.create({ items: CHECKOUT_ITEMS, fee: 500 });
-  assert.equal(checkout.constructor, Checkout);
-  assert.deepEqual(api.lastJson(), { items: CHECKOUT_ITEMS, fee: 500 });
+  api.add(201, ORDER_PENDING);
+  const order = await ConnectOrder.create({ items: ORDER_ITEMS, fee: 500 });
+  assert.equal(order.constructor, ConnectOrder);
+  assert.deepEqual(api.lastJson(), { items: ORDER_ITEMS, fee: 500 });
   assert.equal(api.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
 
-  api.add(200, CHECKOUT_SUCCEEDED);
-  assert.equal((await Checkout.retrieve(CHECKOUT_ID)).status, "succeeded");
+  api.add(200, ORDER_SUCCEEDED);
+  assert.equal((await ConnectOrder.retrieve(ORDER_ID)).status, "succeeded");
 
-  api.add(200, CHECKOUT_REFUNDED);
-  const refunded = await Checkout.refund(CHECKOUT_ID, { idempotencyKey: "r-1" });
+  api.add(200, ORDER_REFUNDED);
+  const refunded = await ConnectOrder.refund(ORDER_ID, { idempotencyKey: "r-1" });
   assert.equal(refunded.status, "refunded");
-  assert.equal(api.last.url.pathname, `/v1/checkout/orders/${CHECKOUT_ID}/refund`);
+  assert.equal(api.last.url.pathname, `/v1/connect/orders/${ORDER_ID}/refund`);
   assert.equal(api.last.headers.get("idempotency-key"), "r-1");
 });
 
@@ -272,36 +293,259 @@ test("OAuth.token no necesita clave", async () => {
   assert.equal(api.last.headers.get("idempotency-key"), null); // el code se canjea una sola vez
 });
 
-test("checkout.refund() desde la instancia usa el cliente del que vino", async () => {
+test("order.refund() desde la instancia usa el cliente del que vino", async () => {
   const globalApi = globalAPI();
   const otherApi = new MockAPI();
   const client = otherApi.client(ACCESS_TOKEN);
-  otherApi.add(200, CHECKOUT_SUCCEEDED);
-  const checkout = await client.checkout.orders.retrieve(CHECKOUT_ID);
-  otherApi.add(200, CHECKOUT_REFUNDED);
-  const refunded = await checkout.refund();
+  otherApi.add(200, ORDER_SUCCEEDED);
+  const order = await client.connect.orders.retrieve(ORDER_ID);
+  otherApi.add(200, ORDER_REFUNDED);
+  const refunded = await order.refund();
   assert.equal(refunded.status, "refunded");
-  assert.equal(checkout.status, "succeeded"); // devuelve un checkout nuevo, no muta el original
-  assert.equal(otherApi.last.url.pathname, `/v1/checkout/orders/${CHECKOUT_ID}/refund`);
+  assert.equal(order.status, "succeeded"); // devuelve un pago nuevo, no muta el original
+  assert.equal(otherApi.last.url.pathname, `/v1/connect/orders/${ORDER_ID}/refund`);
   assert.equal(otherApi.last.headers.get("authorization"), `Bearer ${ACCESS_TOKEN}`);
   assert.deepEqual(globalApi.requests, []);
 });
 
-test("los eventos checkout.* de Webhook.constructEvent usan el estilo global", async () => {
+test("los eventos connect.order.* de Webhook.constructEvent usan el estilo global", async () => {
   const api = globalAPI();
-  const body = JSON.stringify(EVENT_CHECKOUT_SUCCEEDED);
+  const body = JSON.stringify(EVENT_ORDER_SUCCEEDED);
   const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
-  const checkout = Webhook.constructEvent(body, header, WEBHOOK_SECRET).data.object;
-  assert.ok(checkout instanceof Checkout);
-  api.add(200, CHECKOUT_REFUNDED);
-  await checkout.refund({ idempotencyKey: "r-2" });
-  assert.equal(api.last.url.pathname, `/v1/checkout/orders/${CHECKOUT_ID}/refund`);
+  const order = Webhook.constructEvent(body, header, WEBHOOK_SECRET).data.object;
+  assert.ok(order instanceof ConnectOrder);
+  api.add(200, ORDER_REFUNDED);
+  await order.refund({ idempotencyKey: "r-2" });
+  assert.equal(api.last.url.pathname, `/v1/connect/orders/${ORDER_ID}/refund`);
   assert.equal(api.last.headers.get("idempotency-key"), "r-2");
 });
 
-test("el reembolso de un checkout necesita un id", async () => {
-  const checkout = Checkout.constructFrom({ object: "checkout" });
-  const error = await rejection(checkout.refund());
+test("el reembolso de un pago de Connect necesita un id", async () => {
+  const order = ConnectOrder.constructFrom({ object: "connect.order" });
+  const error = await rejection(order.refund());
   assert.ok(error instanceof RangeError);
   assert.match(error.message, /no tiene id/);
+});
+
+test("los payouts de Connect: create, retrieve y list, con la clave secreta", async () => {
+  const api = globalAPI();
+  api.add(201, PAYOUT_PENDING);
+  const payout = await ConnectPayout.create(
+    { amount: 60000, destination: PAYOUT_DESTINATION },
+    { idempotencyKey: "payout-1" },
+  );
+  assert.equal(payout.constructor, ConnectPayout);
+  assert.equal(api.last.url.pathname, "/v1/connect/payouts");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(api.last.headers.get("idempotency-key"), "payout-1");
+  assert.deepEqual(api.lastJson(), { amount: 60000, destination: PAYOUT_DESTINATION });
+
+  api.add(200, PAYOUT_COMPLETED);
+  assert.equal((await ConnectPayout.retrieve(PAYOUT_ID)).status, "completed");
+  assert.equal(api.last.url.pathname, `/v1/connect/payouts/${PAYOUT_ID}`);
+
+  api.add(200, PAYOUT_LIST);
+  const page = await ConnectPayout.list({ status: "completed", limit: 2 });
+  assert.equal(page.constructor, ListObject);
+  assert.equal(api.last.url.pathname, "/v1/connect/payouts");
+  assert.equal(api.last.url.searchParams.get("status"), "completed");
+  assert.equal(api.last.url.searchParams.get("limit"), "2");
+});
+
+test("ConnectPayout.create exige la idempotencyKey", async () => {
+  const api = globalAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = ConnectPayout as any;
+  const error = await rejection(untyped.create({ amount: 1, destination: "x" }));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /connect\.payouts\.create necesita idempotencyKey/);
+  assert.deepEqual(api.requests, []);
+});
+
+// --- Identidad --------------------------------------------------------------------------------
+
+test("Identidad: create, retrieve, list, cancel y files, con la clave secreta", async () => {
+  const api = globalAPI();
+  api.add(201, VERIFICATION_PENDING);
+  const verification = await IdentityVerification.create(
+    { type: "document", metadata: { plan: "pro" } },
+    { idempotencyKey: "alta-1" },
+  );
+  assert.equal(verification.constructor, IdentityVerification);
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["POST", "/v1/identity/verifications"],
+  );
+  assert.deepEqual(api.lastJson(), { type: "document", metadata: { plan: "pro" } });
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(api.last.headers.get("idempotency-key"), "alta-1");
+
+  api.add(201, VERIFICATION_PENDING);
+  await IdentityVerification.create({ type: "document" });
+  assert.ok(api.last.headers.get("idempotency-key")); // sin clave propia, el SDK genera una
+
+  api.add(200, VERIFICATION_VERIFIED);
+  assert.equal((await IdentityVerification.retrieve(VERIFICATION_ID)).status, "verified");
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["GET", `/v1/identity/verifications/${VERIFICATION_ID}`],
+  );
+
+  api.add(200, VERIFICATION_LIST);
+  const page = await IdentityVerification.list({ status: "verified", limit: 2 });
+  assert.equal(page.constructor, ListObject);
+  assert.ok(page.data.every((item) => item instanceof IdentityVerification));
+  assert.equal(api.last.url.pathname, "/v1/identity/verifications");
+  assert.equal(api.last.url.searchParams.get("status"), "verified");
+  assert.equal(api.last.url.searchParams.get("limit"), "2");
+
+  api.add(200, VERIFICATION_CANCELED);
+  const canceled = await IdentityVerification.cancel(VERIFICATION_ID, { idempotencyKey: "c-1" });
+  assert.equal(canceled.status, "canceled");
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["POST", `/v1/identity/verifications/${VERIFICATION_ID}/cancel`],
+  );
+  assert.equal(api.last.body, undefined);
+  assert.equal(api.last.headers.get("idempotency-key"), "c-1");
+
+  api.add(200, VERIFICATION_FILES);
+  const files = await IdentityVerification.files(VERIFICATION_ID);
+  assert.equal(files.constructor, IdentityVerificationFiles);
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["GET", `/v1/identity/verifications/${VERIFICATION_ID}/files`],
+  );
+  assert.equal(api.requests.length, 6);
+});
+
+test("verification.cancel() desde la instancia devuelve una verificación nueva", async () => {
+  const api = globalAPI();
+  api.add(200, VERIFICATION_PENDING);
+  const verification = await IdentityVerification.retrieve(VERIFICATION_ID);
+  api.add(200, VERIFICATION_CANCELED);
+  const canceled = await verification.cancel();
+  assert.equal(canceled.status, "canceled");
+  assert.equal(verification.status, "pending"); // no muta la original
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["POST", `/v1/identity/verifications/${VERIFICATION_ID}/cancel`],
+  );
+  assert.ok(api.last.headers.get("idempotency-key")); // generada para esta llamada
+});
+
+test("verification.cancel() usa el cliente del que vino", async () => {
+  const globalApi = globalAPI();
+  const otherApi = new MockAPI();
+  const client = otherApi.client(OTHER_KEY);
+  otherApi.add(200, VERIFICATION_PENDING);
+  const verification = await client.identity.verifications.retrieve(VERIFICATION_ID);
+  otherApi.add(200, VERIFICATION_CANCELED);
+  await verification.cancel({ idempotencyKey: "c-1" });
+  assert.equal(otherApi.last.url.pathname, `/v1/identity/verifications/${VERIFICATION_ID}/cancel`);
+  assert.equal(otherApi.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+  assert.equal(otherApi.last.headers.get("idempotency-key"), "c-1");
+  assert.deepEqual(globalApi.requests, []);
+});
+
+test("los eventos identity.verification.* de Webhook.constructEvent usan el estilo global", async () => {
+  const api = globalAPI();
+  const body = JSON.stringify(EVENT_VERIFICATION_VERIFIED);
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const verification = Webhook.constructEvent(body, header, WEBHOOK_SECRET).data.object;
+  assert.ok(verification instanceof IdentityVerification);
+  assert.equal(verification.person, null);
+  api.add(200, VERIFICATION_CANCELED);
+  await verification.cancel({ idempotencyKey: "c-2" });
+  assert.equal(api.last.url.pathname, `/v1/identity/verifications/${VERIFICATION_ID}/cancel`);
+  assert.equal(api.last.headers.get("idempotency-key"), "c-2");
+});
+
+test("con client.constructEvent, verification.cancel() usa la clave de ese cliente", async () => {
+  const globalApi = globalAPI();
+  const otherApi = new MockAPI();
+  const body = JSON.stringify(EVENT_VERIFICATION_VERIFIED);
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = otherApi.client(OTHER_KEY).constructEvent(body, header, WEBHOOK_SECRET);
+  const verification = event.data.object;
+  assert.ok(verification instanceof IdentityVerification);
+  otherApi.add(200, VERIFICATION_CANCELED);
+  await verification.cancel();
+  assert.equal(otherApi.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+  assert.deepEqual(globalApi.requests, []);
+});
+
+test("la cancelación de una verificación necesita un id", async () => {
+  const api = globalAPI();
+  const verification = IdentityVerification.constructFrom({ object: "identity.verification" });
+  const error = await rejection(verification.cancel());
+  assert.ok(error instanceof RangeError);
+  assert.equal(error.message, "Esta IdentityVerification no tiene id: no se puede cancelar.");
+  assert.deepEqual(api.requests, []);
+});
+
+test("IdentityVerification lee RAYA_SECRET_KEY y, sin clave, falla sin mandar nada", async () => {
+  const api = new MockAPI();
+  config.fetch = api.fetch;
+  const error = await rejection(IdentityVerification.retrieve(VERIFICATION_ID));
+  assert.ok(error instanceof AuthenticationError);
+  assert.equal(error.code, "API_KEY_MISSING");
+  assert.deepEqual(api.requests, []);
+  process.env.RAYA_SECRET_KEY = OTHER_KEY;
+  api.add(200, VERIFICATION_PENDING);
+  await IdentityVerification.retrieve(VERIFICATION_ID);
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+});
+
+// --- Sandbox ----------------------------------------------------------------------------------
+
+test("Payment.simulateTransfer: el helper del sandbox en el estilo global", async () => {
+  const api = globalAPI();
+  config.apiKey = SANDBOX_SECRET_KEY; // la clave secreta de prueba del sandbox
+  api.add(200, SANDBOX_PAYMENT_SUCCEEDED);
+  const payment = await Payment.simulateTransfer(SANDBOX_PAYMENT_ID);
+  assert.equal(payment.constructor, Payment);
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["POST", `/v1/test/payments/${SANDBOX_PAYMENT_ID}/simulate_transfer`],
+  );
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${SANDBOX_SECRET_KEY}`);
+  assert.equal(api.last.headers.get("idempotency-key"), null);
+  assert.equal(api.last.body, undefined);
+
+  api.add(200, SANDBOX_PAYMENT_FAILED);
+  const failed = await Payment.simulateTransfer(SANDBOX_PAYMENT_ID, { amount: "1000.00" });
+  assert.equal(failed.status, "failed");
+  assert.equal(api.last.body, '{"amount":1000}');
+  assert.equal(api.last.headers.get("idempotency-key"), null);
+
+  // Con el id de una orden de Raya Connect, su ConnectOrder.
+  api.add(200, SANDBOX_ORDER_SUCCEEDED);
+  const order = await Payment.simulateTransfer(SANDBOX_ORDER_ID);
+  assert.equal(order.constructor, ConnectOrder);
+
+  // Lo que devuelve usa la configuración global: el reembolso de prueba va con config.apiKey.
+  api.add(200, { ...SANDBOX_PAYMENT_SUCCEEDED, status: "refunded" });
+  await payment.refund();
+  assert.equal(api.last.url.pathname, `/v1/payments/${SANDBOX_PAYMENT_ID}/refund`);
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${SANDBOX_SECRET_KEY}`);
+  assert.equal(api.requests.length, 4);
+});
+
+test("Payment.simulateTransfer tampoco acepta idempotencyKey y, sin clave, no manda nada", async () => {
+  const api = new MockAPI();
+  config.fetch = api.fetch;
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = Payment as any;
+  config.apiKey = SANDBOX_SECRET_KEY;
+  let error = await rejection(
+    untyped.simulateTransfer(SANDBOX_PAYMENT_ID, null, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof RangeError);
+  assert.match(error.message, /no acepta idempotencyKey en las opciones/);
+  config.apiKey = null;
+  error = await rejection(Payment.simulateTransfer(SANDBOX_PAYMENT_ID));
+  assert.ok(error instanceof AuthenticationError);
+  assert.equal(error.code, "API_KEY_MISSING");
+  assert.deepEqual(api.requests, []);
 });

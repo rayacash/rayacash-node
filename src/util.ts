@@ -11,7 +11,7 @@ export interface AppInfo {
   url?: string;
 }
 
-// Como STRIPE_LOG: RAYA_LOG se lee una vez, al cargar. config.log lo pisa en runtime.
+// RAYA_LOG se lee una vez, al cargar. config.log lo pisa en runtime.
 export const logSettings: { env: string | null } = { env: process.env.RAYA_LOG ?? null };
 
 /** Para `util.inspect` (console.log) sin importar node:util. */
@@ -127,12 +127,13 @@ export function userAgent(appInfo: AppInfo | null): string {
 }
 
 // Los prefijos que se conservan al enmascarar: la clave secreta y el access_token de una cuenta
-// conectada.
-const KEY_PREFIXES = ["raya_sk_live_", "raya_at_live_"];
+// conectada, cada uno con su par de prueba de un sandbox (la clave secreta de prueba y el
+// access_token de un usuario de prueba).
+const KEY_PREFIXES = ["raya_sk_live_", "raya_sk_test_", "raya_at_live_", "raya_at_test_"];
 
 /**
- * `raya_sk_live_…AbCd` (o `raya_at_live_…AbCd`): para inspect y logs. Nunca mostramos la clave
- * ni el access_token enteros.
+ * `raya_sk_live_…AbCd` (o `raya_sk_test_…AbCd`, `raya_at_live_…AbCd` o `raya_at_test_…AbCd`): para
+ * inspect y logs. Nunca mostramos la clave ni el access_token enteros.
  */
 export function maskKey(key: string | null): string | null {
   if (!key) return null;

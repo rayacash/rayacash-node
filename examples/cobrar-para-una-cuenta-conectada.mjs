@@ -1,8 +1,8 @@
 // @ts-check
-// Cobrar a nombre de una cuenta conectada: canjea el code de la autorización, lee la cuenta y crea
-// un checkout con tu comisión.
+// Cobrar a nombre de una cuenta conectada con Raya Connect: canjea el code de la autorización, lee
+// la cuenta y crea un pago con tu comisión.
 //
-// ATENCIÓN: correr este script crea un checkout a nombre del comercio conectado, que reserva un CVU
+// ATENCIÓN: correr este script crea un pago a nombre del comercio conectado, que reserva un CVU
 // suyo hasta que vence (24 h, salvo que el comercio tenga otro plazo).
 //
 //   RAYA_CLIENT_ID=7650337728110670 RAYA_CLIENT_SECRET=raya_cs_live_… \
@@ -31,20 +31,18 @@ const token = await new RayaClient().oauth.token({
   code,
   redirect_uri: RAYA_REDIRECT_URI, // la misma del link de autorización
 });
-// Guardá user_id y access_token juntos, el token cifrado: no vence.
+// Guardá user_id y access_token juntos en tu servidor: el token no vence.
 console.log(`Cuenta conectada ${token.user_id}`);
 
 // 2. Con el access_token, un cliente para esa cuenta.
 const connected = new RayaClient(token.access_token);
 const user = await connected.users.retrieve(token.user_id);
 console.log(`${user.full_name} (${user.identification?.type} ${user.identification?.number})`);
-if (user.merchant === null) {
-  console.log("Todavía no configuró su negocio en Raya: crear un checkout va a fallar.");
-}
+// No hace falta que haya configurado su negocio: si user.merchant es null, el primer pago se lo crea.
 
-// 3. Un checkout a su nombre, con tu comisión fija. En tu sistema: generá la clave y guardala con el
-//    pedido ANTES de llamar, para que un reintento no cree otro checkout.
-const checkout = await connected.checkout.orders.create(
+// 3. Un pago a su nombre, con tu comisión fija. En tu sistema: generá la clave y guardala con el
+//    pedido ANTES de llamar, para que un reintento no cree otro pago.
+const order = await connected.connect.orders.create(
   {
     items: [{ title: "Pedido 1042", quantity: 1, unit_price: 45000 }],
     fee: 500, // se retiene del pago y se liquida a tu cuenta
@@ -54,7 +52,8 @@ const checkout = await connected.checkout.orders.create(
   },
   { idempotencyKey: randomUUID() },
 );
-console.log(`Checkout ${checkout.id}: ${checkout.status}`);
-console.log(`Pagá en ${checkout.checkout_url} antes de ${checkout.expires_at}`);
-console.log(`El comercio recibe $${checkout.net_amount} y vos, $${checkout.fee}`);
-// Te avisamos con checkout.succeeded cuando llega la transferencia; el comercio recibe payment.*.
+console.log(`Pago ${order.id}: ${order.status}`);
+console.log(`Pagá en ${order.checkout_url} antes de ${order.expires_at}`);
+console.log(`El comercio recibe $${order.net_amount} y vos, $${order.fee}`);
+// Te avisamos con connect.order.succeeded cuando llega la transferencia; el comercio recibe
+// payment.*.

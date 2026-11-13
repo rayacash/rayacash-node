@@ -15,7 +15,8 @@ export type TransferStatus = "pending" | "completed" | "failed" | "reversed";
  * Una transferencia: enviada (`outbound`) o recibida (`inbound`, un depósito).
  *
  * Es el mismo objeto que llega en los webhooks `transfer.*`. Los cobros de tus pagos no son
- * transferencias: se siguen en cada `Payment`.
+ * transferencias: se siguen en cada `Payment`. Un `ConnectPayout` sí aparece como transferencia,
+ * con el mismo `id`: no lo cuentes dos veces.
  */
 export class Transfer extends RayaObject {
   static override readonly OBJECT_NAME = "transfer";

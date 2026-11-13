@@ -1,5 +1,5 @@
 // @ts-check
-// Build dual sin bundler, como stripe-node: tsc dos veces, a dist/esm (import) y a dist/cjs
+// Build dual sin bundler: tsc dos veces, a dist/esm (import) y a dist/cjs
 // (require), cada carpeta con su package.json para que Node sepa qué formato es.
 
 import { execFileSync } from "node:child_process";

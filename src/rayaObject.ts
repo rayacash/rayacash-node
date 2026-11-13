@@ -1,4 +1,4 @@
-// RayaObject: un objeto de la API, como el StripeObject de stripe-node.
+// RayaObject: un objeto de la API, con sus campos como propiedades.
 //
 // Sus propiedades propias son exactamente el JSON que mandó la API (montos number, fechas en
 // string ISO), así que `JSON.stringify(obj)` y `{ ...obj }` dan ese JSON. Los campos que el SDK

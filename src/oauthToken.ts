@@ -6,8 +6,8 @@ import { INSPECT, maskKey } from "./util.ts";
 /**
  * El access_token de una cuenta que conectó tu app, con su `user_id`.
  *
- * Guardá los dos juntos, el token cifrado: con `new RayaClient(token.access_token)` creás
- * checkouts a nombre de esa cuenta y leés sus datos (`client.users.retrieve(token.user_id)`). No
+ * Guardá los dos juntos en la base de tu servidor: con `new RayaClient(token.access_token)` creás
+ * pagos a nombre de esa cuenta y leés sus datos (`client.users.retrieve(token.user_id)`). No
  * vence; deja de valer cuando la cuenta desconecta tu app o la vuelve a autorizar (ahí recibís
  * uno nuevo). Es la respuesta de `client.oauth.token()`.
  */
@@ -15,13 +15,16 @@ export class OAuthToken extends RayaObject {
   static override readonly OBJECT_NAME = "oauth_token";
 
   declare object: "oauth_token";
-  /** `raya_at_live_…`: va en `Authorization: Bearer`, como una clave secreta. Es un secreto. */
+  /**
+   * `raya_at_live_…` (`raya_at_test_…` si es un usuario de prueba de un sandbox): va en
+   * `Authorization: Bearer`, como una clave secreta. Es un secreto.
+   */
   declare access_token: string;
   /** Siempre `"Bearer"`. */
   declare token_type: string;
-  /** Los permisos que dio la cuenta, separados por espacio: `"checkout profile"`. */
+  /** Los permisos que dio la cuenta, separados por espacio: `"orders profile"`. */
   declare scope: string;
-  /** El id de la cuenta conectada: el `:id` de `users.retrieve` y el `account` de sus checkouts. */
+  /** El id de la cuenta conectada: el `:id` de `users.retrieve` y el `account` de los pagos que creás a su nombre. */
   declare user_id: string;
   /** Siempre `null`: el token no vence. */
   declare expires_in: null;

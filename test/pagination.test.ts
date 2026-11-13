@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ListObject, type Transfer } from "../src/index.ts";
-import { transferPage } from "./fixtures.ts";
-import { isolate, MockAPI, OTHER_KEY, rejection } from "./helpers.ts";
+import {
+  ConnectPayout,
+  config,
+  IdentityVerification,
+  ListObject,
+  type Transfer,
+} from "../src/index.ts";
+import { payoutPage, transferPage, verificationPage } from "./fixtures.ts";
+import { isolate, MockAPI, OTHER_KEY, rejection, TEST_KEY } from "./helpers.ts";
 
 isolate();
 
@@ -84,5 +90,114 @@ test("una lista sin contexto no puede pedir más", async () => {
   assert.deepEqual(
     [...page].map((transfer) => transfer.id),
     ["t1"],
+  );
+});
+
+test("connect.payouts.list también pagina: la misma ruta y los mismos filtros", async () => {
+  const api = new MockAPI();
+  api.add(200, payoutPage(["p1", "p2"], "c1"));
+  api.add(200, payoutPage(["p3"], null));
+  const page = await api.client().connect.payouts.list({ status: "completed", limit: 2 });
+  const ids: string[] = [];
+  for await (const payout of page.autoPagingIter()) {
+    assert.equal(payout.constructor, ConnectPayout);
+    ids.push(payout.id);
+  }
+  assert.deepEqual(ids, ["p1", "p2", "p3"]);
+  assert.equal(api.requests.length, 2);
+  assert.deepEqual(
+    api.requests.map((request) => request.url.pathname),
+    ["/v1/connect/payouts", "/v1/connect/payouts"],
+  );
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [
+      { status: "completed", limit: "2" },
+      { status: "completed", limit: "2", cursor: "c1" },
+    ],
+  );
+});
+
+// --- Identidad --------------------------------------------------------------------------------
+
+function queueThreeVerificationPages(api: MockAPI): void {
+  api.add(200, verificationPage(["v1", "v2"], "c1"));
+  api.add(200, verificationPage(["v3", "v4"], "c2"));
+  api.add(200, verificationPage(["v5"], null));
+}
+
+test("identity.verifications.list pagina con los mismos filtros y las mismas opciones", async () => {
+  const api = new MockAPI();
+  queueThreeVerificationPages(api);
+  const page = await api
+    .client()
+    .identity.verifications.list(
+      { status: "verified", type: "document", limit: 2 },
+      { apiKey: OTHER_KEY },
+    );
+  const ids: string[] = [];
+  for await (const verification of page.autoPagingIter()) {
+    assert.equal(verification.constructor, IdentityVerification);
+    ids.push(verification.id);
+  }
+  assert.deepEqual(ids, ["v1", "v2", "v3", "v4", "v5"]);
+  assert.equal(api.requests.length, 3); // al llegar al final no pide otra página
+  assert.deepEqual(
+    api.requests.map((request) => request.url.pathname),
+    Array(3).fill("/v1/identity/verifications"),
+  );
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [
+      { status: "verified", type: "document", limit: "2" },
+      { status: "verified", type: "document", limit: "2", cursor: "c1" },
+      { status: "verified", type: "document", limit: "2", cursor: "c2" },
+    ],
+  );
+  // Las opciones de la primera request también viajan en las siguientes.
+  assert.deepEqual(
+    new Set(api.requests.map((request) => request.headers.get("authorization"))),
+    new Set([`Bearer ${OTHER_KEY}`]),
+  );
+});
+
+test("identity.verifications.list: se puede cortar el recorrido a mitad de camino", async () => {
+  const api = new MockAPI();
+  queueThreeVerificationPages(api);
+  const page = await api.client().identity.verifications.list();
+  const ids: string[] = [];
+  for await (const verification of page.autoPagingIter()) {
+    ids.push(verification.id);
+    if (ids.length === 3) break;
+  }
+  assert.deepEqual(ids, ["v1", "v2", "v3"]);
+  assert.equal(api.requests.length, 2);
+  assert.equal(api.pending, 1);
+});
+
+test("identity.verifications.list: nextPage en la última página no hace ninguna request", async () => {
+  const api = new MockAPI();
+  api.add(200, verificationPage(["v1"], null));
+  const page = await api.client().identity.verifications.list({ status: "verified" });
+  const empty = await page.nextPage();
+  assert.ok(empty instanceof ListObject);
+  assert.deepEqual([...empty], []);
+  assert.equal(empty.has_more, false);
+  assert.equal(api.requests.length, 1);
+});
+
+test("IdentityVerification.list (estilo global) también pagina", async () => {
+  const api = new MockAPI();
+  config.apiKey = TEST_KEY;
+  config.fetch = api.fetch;
+  api.add(200, verificationPage(["v1"], "c1"));
+  api.add(200, verificationPage(["v2"], null));
+  const page = await IdentityVerification.list({ external_reference: "cliente-8812" });
+  const ids: string[] = [];
+  for await (const verification of page.autoPagingIter()) ids.push(verification.id);
+  assert.deepEqual(ids, ["v1", "v2"]);
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [{ external_reference: "cliente-8812" }, { external_reference: "cliente-8812", cursor: "c1" }],
   );
 });

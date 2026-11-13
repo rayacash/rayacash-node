@@ -88,7 +88,7 @@ function parseHeader(header: string): { timestamp: bigint | null; signatures: st
   return { timestamp, signatures };
 }
 
-// biome-ignore lint/complexity/noStaticOnlyClass: la API es la de stripe (Webhook.constructEvent).
+// biome-ignore lint/complexity/noStaticOnlyClass: la API pública es estática (Webhook.constructEvent).
 export class WebhookSignature {
   static readonly EXPECTED_SCHEME = "v1";
 
@@ -216,7 +216,7 @@ export function constructEvent(
   }
 }
 
-// biome-ignore lint/complexity/noStaticOnlyClass: la API es la de stripe (Webhook.constructEvent).
+// biome-ignore lint/complexity/noStaticOnlyClass: la API pública es estática (Webhook.constructEvent).
 export class Webhook {
   static readonly DEFAULT_TOLERANCE = DEFAULT_TOLERANCE;
 

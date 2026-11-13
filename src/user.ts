@@ -17,7 +17,7 @@ export type UserIdentificationType = "DNI" | "CUIT";
 export class User extends RayaObject {
   static override readonly OBJECT_NAME = "user";
 
-  /** El `user_id` del access_token y el `account` de sus checkouts. */
+  /** El `user_id` del access_token y el `account` de los pagos que creás a su nombre. */
   declare id: string;
   declare object: "user";
   /** `personal` (una persona) o `business` (una empresa, con `business`). */
@@ -48,7 +48,10 @@ export class User extends RayaObject {
   declare verified_at: string | null;
   /** Los datos de la sociedad; solo en cuentas `business`. */
   declare business: User.Business | null;
-  /** El negocio configurado en Raya (lo que ve quien paga); `null` si todavía no lo configuró. */
+  /**
+   * El comercio de la cuenta (lo que ve quien paga); `null` hasta que configure su negocio o le crees
+   * el primer pago (ahí se lo creamos con sus datos legales): no hace falta para cobrarle.
+   */
   declare merchant: User.Merchant | null;
   /** Cuándo se creó la cuenta en Raya (ISO 8601 en UTC). */
   declare created_at: string;
@@ -99,7 +102,7 @@ export declare namespace User {
     representative: Representative | null;
   }
 
-  /** El negocio de la cuenta, como lo ve quien paga en la página del checkout. */
+  /** El negocio de la cuenta, como lo ve quien paga en la página de pago. */
   interface Merchant {
     /** El nombre visible del comercio. */
     name: string;

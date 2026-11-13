@@ -64,7 +64,7 @@ export class RayaError extends Error {
     hidden(this, "jsonBody", options.jsonBody ?? null);
   }
 
-  /** El mismo `message`, como en stripe. */
+  /** El mismo `message`: un alias para quien lo busca con este nombre. */
   get userMessage(): string {
     return this.message;
   }

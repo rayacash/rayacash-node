@@ -1,8 +1,10 @@
 import { BalanceService } from "./balanceService.ts";
-import { CheckoutService } from "./checkoutService.ts";
 import { DEFAULT_API_BASE, DEFAULT_MAX_NETWORK_RETRIES, DEFAULT_TIMEOUT } from "./config.ts";
+import { ConnectService } from "./connectService.ts";
+import { warnDeprecated } from "./deprecated.ts";
 import { checkParams, encodeQuery, isPlainObject, typeName } from "./encoding.ts";
 import type { Event } from "./event.ts";
+import { IdentityService } from "./identityService.ts";
 import { ListObject, setRetrieveContext } from "./listObject.ts";
 import { OAuthService } from "./oauthService.ts";
 import { PaymentService } from "./paymentService.ts";
@@ -19,6 +21,7 @@ import {
   validateMaxNetworkRetries,
   validateTimeout,
 } from "./requestor.ts";
+import { SandboxHelpersService } from "./sandboxHelpersService.ts";
 import { TransferService } from "./transferService.ts";
 import { UserService } from "./userService.ts";
 import { type AppInfo, INSPECT, maskKey, userAgent, validateAppInfo } from "./util.ts";
@@ -27,8 +30,9 @@ import { constructEvent, DEFAULT_TOLERANCE, type Payload } from "./webhook.ts";
 export interface RayaClientOptions {
   /**
    * Tu clave secreta (`raya_sk_live_…`) o, para cobrar a nombre de una cuenta que conectó tu app,
-   * su access_token (`raya_at_live_…`). Si no la pasás, se lee de la variable de entorno
-   * `RAYA_SECRET_KEY`.
+   * su access_token (`raya_at_live_…`). En un sandbox, sus pares de prueba: la clave secreta de
+   * prueba (`raya_sk_test_…`) y el access_token de un usuario de prueba (`raya_at_test_…`). Si no
+   * la pasás, se lee de la variable de entorno `RAYA_SECRET_KEY`.
    */
   apiKey?: string | null;
   /** Por defecto, `https://api.raya.cash`. */
@@ -149,8 +153,13 @@ function splitArguments(
  * navegador, en una app mobile ni en el repositorio.
  *
  * Para cobrar a nombre de una cuenta que conectó tu app, el cliente se arma con su access_token
- * (`new RayaClient(token.access_token)`): `client.checkout` y `client.users` usan ese token;
- * `client.oauth.token()` lo consigue y no necesita clave.
+ * (`new RayaClient(token.access_token)`): `client.connect.orders` y `client.users` usan ese token;
+ * `client.oauth.token()` lo consigue y no necesita clave. `client.connect.payouts` sale de tu
+ * saldo y va con tu clave secreta.
+ *
+ * En un sandbox, el cliente va con su clave secreta de prueba (`raya_sk_test_…`) y la misma
+ * `apiBase`: la clave decide el entorno. `client.testHelpers` solo funciona ahí (con una clave
+ * real, la API responde `SANDBOX_ONLY`).
  */
 export class RayaClient {
   readonly balance: BalanceService;
@@ -160,8 +169,22 @@ export class RayaClient {
   readonly oauth: OAuthService;
   /** Los datos de la cuenta conectada (con su access_token). */
   readonly users: UserService;
-  /** Los checkouts a nombre de la cuenta conectada (con su access_token). */
-  readonly checkout: CheckoutService;
+  /**
+   * Raya Connect: `connect.orders`, los pagos a nombre de la cuenta conectada (con su
+   * access_token), y `connect.payouts`, lo que les enviás a tus vendedores desde tu saldo (con tu
+   * clave secreta).
+   */
+  readonly connect: ConnectService;
+  /**
+   * Identidad: `identity.verifications`, para verificar la identidad de tus clientes con su DNI,
+   * una prueba de vida y el registro (con tu clave secreta).
+   */
+  readonly identity: IdentityService;
+  /**
+   * Lo que solo existe en un sandbox, con su clave secreta de prueba (`raya_sk_test_…`):
+   * `testHelpers.payments.simulateTransfer`, para simular la transferencia de un pago de prueba.
+   */
+  readonly testHelpers: SandboxHelpersService;
 
   readonly #config: ClientConfig;
   readonly #requestor: APIRequestor;
@@ -207,7 +230,23 @@ export class RayaClient {
     this.payments = new PaymentService(this.#requestor);
     this.oauth = new OAuthService(this.#requestor);
     this.users = new UserService(this.#requestor);
-    this.checkout = new CheckoutService(this.#requestor);
+    this.connect = new ConnectService(this.#requestor);
+    this.identity = new IdentityService(this.#requestor);
+    this.testHelpers = new SandboxHelpersService(this.#requestor);
+  }
+
+  /**
+   * @deprecated Desde la 1.2.0 se llama `client.connect`: es el mismo objeto, así que
+   * `client.checkout.orders` es `client.connect.orders` y llama a `/v1/connect/orders`. Avisa una
+   * vez por proceso con un `DeprecationWarning`. Se va en la 2.0.0.
+   */
+  get checkout(): ConnectService {
+    warnDeprecated(
+      "RAYACASH_DEP_CHECKOUT",
+      "client.checkout está deprecado: usá client.connect, que es el mismo objeto. Se elimina en " +
+        "rayacash 2.0.0.",
+    );
+    return this.connect;
   }
 
   /**
@@ -262,6 +301,23 @@ export class RayaClient {
     return { apiBase: this.#config.apiBase(), apiKey: maskKey(this.#config.apiKey()) };
   }
 }
+
+// En la 1.1.0, `checkout` era una propiedad propia de cada cliente y desde JavaScript se podía
+// reasignar (`client.checkout = mock`, en los tests de una integración). Este setter lo sigue
+// permitiendo: lo asignado queda como esa propiedad propia (escribible, configurable y enumerable,
+// como en la 1.1.0), que tapa al getter, así que las lecturas siguientes lo devuelven, sin aviso.
+// Va acá y no en la clase para que TypeScript la siga viendo de solo lectura, como la declaraba la
+// 1.1.0. Redefinir solo `set` conserva el getter de la clase y sus atributos.
+Object.defineProperty(RayaClient.prototype, "checkout", {
+  set(this: RayaClient, value: unknown): void {
+    Object.defineProperty(this, "checkout", {
+      value,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  },
+});
 
 Object.defineProperty(RayaClient.prototype, INSPECT, {
   value(

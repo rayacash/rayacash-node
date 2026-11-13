@@ -1,7 +1,12 @@
+import type { ConnectOrder } from "./connectOrder.ts";
 import { type PaymentCreateParams, PaymentService } from "./paymentService.ts";
 import { RayaObject, resolveRequestor } from "./rayaObject.ts";
 import { defaultRequestor, registerObjectClass } from "./registry.ts";
 import type { PostRequestOptions, RequestOptions } from "./requestOptions.ts";
+import {
+  type PaymentSimulateTransferParams,
+  SandboxPaymentHelpersService,
+} from "./sandboxHelpersService.ts";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "expired" | "refunded";
 
@@ -74,6 +79,20 @@ export class Payment extends RayaObject {
   /** Reembolsa un pago por id: `Payment.refund(payment.id)`. */
   static async refund(paymentId: string, options?: PostRequestOptions): Promise<Payment> {
     return new PaymentService(defaultRequestor()).refund(paymentId, options);
+  }
+
+  /**
+   * Simula la transferencia de un pago de prueba, solo en un sandbox (con `config.apiKey` en su
+   * clave secreta de prueba): ver `client.testHelpers.payments.simulateTransfer`. Devuelve el
+   * `Payment` o, con el id de una orden de Raya Connect, su `ConnectOrder`.
+   */
+  static async simulateTransfer(
+    paymentId: string,
+    params?: PaymentSimulateTransferParams | null,
+    options?: RequestOptions,
+  ): Promise<Payment | ConnectOrder> {
+    const helpers = new SandboxPaymentHelpersService(defaultRequestor());
+    return helpers.simulateTransfer(paymentId, params, options);
   }
 }
 
