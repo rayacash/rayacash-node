@@ -18,7 +18,8 @@ export const DEFAULT_MAX_NETWORK_RETRIES = 2;
 export interface GlobalConfig {
   /**
    * Tu clave secreta (`raya_sk_live_…`) o el access_token de una cuenta conectada
-   * (`raya_at_live_…`). Si no la asignás, se lee de la variable de entorno `RAYA_SECRET_KEY`.
+   * (`raya_at_live_…`); en un sandbox, sus pares de prueba (`raya_sk_test_…`, `raya_at_test_…`).
+   * Si no la asignás, se lee de la variable de entorno `RAYA_SECRET_KEY`.
    */
   apiKey: string | null | undefined;
   /** Por defecto, `https://api.raya.cash`. */

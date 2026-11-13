@@ -1,4 +1,5 @@
 import type { ConnectOrder } from "./connectOrder.ts";
+import type { IdentityVerification } from "./identityVerification.ts";
 import type { Payment } from "./payment.ts";
 import { RayaObject } from "./rayaObject.ts";
 import { registerObjectClass } from "./registry.ts";
@@ -23,6 +24,10 @@ export type EventType =
   | "connect.order.succeeded"
   | "connect.order.failed"
   | "connect.order.refunded"
+  | "identity.verification.verified"
+  | "identity.verification.declined"
+  | "identity.verification.expired"
+  | "identity.verification.canceled"
   | "webhook.test"
   // Deprecados: los de la 1.1.0, que la API ya no emite.
   | "checkout.created"
@@ -35,8 +40,10 @@ export type EventType =
  *
  * `event.data.object` es el `Transfer`, el `Payment` o el `ConnectOrder` tal como estaba cuando
  * ocurrió el evento. Los `connect.order.*` le llegan al dueño de la app: el comercio conectado
- * recibe los `payment.*` de ese mismo cobro. `webhook.test` (el botón «Enviar evento de prueba»)
- * trae `{ object: "test", … }`: respondé 2xx e ignoralo.
+ * recibe los `payment.*` de ese mismo cobro. Los `identity.verification.*` traen la
+ * `IdentityVerification`, siempre con `person` en `null`: pedí los datos de la persona con
+ * `client.identity.verifications.retrieve(id)`. `webhook.test` (el botón «Enviar evento de
+ * prueba») trae `{ object: "test", … }`: respondé 2xx e ignoralo.
  */
 export class Event extends RayaObject {
   static override readonly OBJECT_NAME = "event";
@@ -49,12 +56,17 @@ export class Event extends RayaObject {
   declare api_version: string;
   /** Cuándo ocurrió (ISO 8601 en UTC). */
   declare created_at: string;
+  /**
+   * `true` en tu cuenta real y `false` en un sandbox. Un evento emitido antes de que la API sumara
+   * este campo no lo trae si se reenvía (queda `undefined`): tratalo como `true`.
+   */
+  declare livemode?: boolean;
   declare data: Event.Data;
 }
 
 export declare namespace Event {
   interface Data {
-    object: Transfer | Payment | ConnectOrder | RayaObject;
+    object: Transfer | Payment | ConnectOrder | IdentityVerification | RayaObject;
   }
 }
 

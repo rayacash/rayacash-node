@@ -18,6 +18,12 @@ import {
   type ConnectOrderItemParams,
   type ConnectOrderService,
   type ConnectOrderStatus,
+  type ConnectPayout,
+  type ConnectPayoutCreateOptions,
+  type ConnectPayoutCreateParams,
+  type ConnectPayoutListParams,
+  type ConnectPayoutService,
+  type ConnectPayoutStatus,
   type ConnectService,
   config,
   type Event,
@@ -25,19 +31,34 @@ import {
   Balance as GlobalBalance,
   Checkout as GlobalCheckout,
   ConnectOrder as GlobalConnectOrder,
+  ConnectPayout as GlobalConnectPayout,
+  IdentityVerification as GlobalIdentityVerification,
   OAuth as GlobalOAuth,
   Payment as GlobalPayment,
   Transfer as GlobalTransfer,
   User as GlobalUser,
+  type IdentityService,
+  type IdentityVerification,
+  type IdentityVerificationCheckStatus,
+  type IdentityVerificationCreateParams,
+  type IdentityVerificationDeclineCode,
+  type IdentityVerificationFiles,
+  type IdentityVerificationListParams,
+  type IdentityVerificationService,
+  type IdentityVerificationStatus,
+  type IdentityVerificationType,
   type InvalidRequestError,
   type ListObject,
   type OAuthToken,
   type OAuthTokenOptions,
   type Payment,
+  type PaymentSimulateTransferParams,
   type RayaClient,
   type RayaError,
   type RayaObject,
   type RayaResponse,
+  type SandboxHelpersService,
+  type SandboxPaymentHelpersService,
   type Transfer,
   type User,
 } from "rayacash";
@@ -142,9 +163,177 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   check(await client.connect.orders.refund("id", { idempotencyKey: "r" })).is<ConnectOrder>();
   check(await order.refund()).is<ConnectOrder>();
 
+  // Los payouts de Raya Connect: salen de tu saldo, con tu clave secreta.
+  check(client.connect.payouts).is<ConnectPayoutService>();
+  const payoutParams: ConnectPayoutCreateParams = {
+    amount: "60000.50",
+    destination: "ana.ejemplo",
+  };
+  const payoutOptions: ConnectPayoutCreateOptions = { idempotencyKey: "k", timeout: 5_000 };
+  const payout = await client.connect.payouts.create(payoutParams, payoutOptions);
+  check(payout).is<ConnectPayout>();
+  check(payout.object).is<"connect.payout">();
+  check(payout.status).is<ConnectPayoutStatus>();
+  check(payout.status).is<"pending" | "completed" | "failed" | "reversed">();
+  check(payout.amount).is<number>();
+  check(payout.processing_fee).is<number>();
+  check(payout.net_amount).is<number>();
+  check(payout.currency).is<string>();
+  check(payout.origin).is<ConnectPayout.Origin>();
+  check(payout.origin.account).is<string>();
+  check(payout.origin.alias).is<string | null>();
+  check(payout.origin.name).is<string>();
+  check(payout.counterparty).is<ConnectPayout.Counterparty>();
+  check(payout.counterparty.name).is<string | null>();
+  check(payout.counterparty.tax_id).is<string | null>();
+  check(payout.counterparty.account).is<string | null>();
+  check(payout.counterparty.alias).is<string | null>();
+  check(payout.reference).is<string | null>();
+  check(payout.created_at).is<string>();
+  check(await client.connect.payouts.retrieve("id")).is<ConnectPayout>();
+  const payoutFilters: ConnectPayoutListParams = {
+    status: "completed",
+    created_gte: new Date(),
+    created_lt: "2026-11-01T00:00:00-03:00",
+    limit: 100,
+    cursor: "c1",
+  };
+  const payouts = await client.connect.payouts.list(payoutFilters);
+  check(payouts).is<ListObject<ConnectPayout>>();
+  for (const item of payouts) check(item).is<ConnectPayout>();
+  for await (const item of payouts.autoPagingIter()) check(item).is<ConnectPayout>();
+  check(await payouts.nextPage()).is<ListObject<ConnectPayout>>();
+
+  // Identidad: con tu clave secreta.
+  check(client.identity).is<IdentityService>();
+  check(client.identity.verifications).is<IdentityVerificationService>();
+  const verificationParams: IdentityVerificationCreateParams = {
+    type: "document",
+    external_reference: "cliente-8812",
+    metadata: { plan: "pro" },
+    return_url: "https://tienda.example.com/cuenta",
+    expires_in: 86400,
+  };
+  const verification = await client.identity.verifications.create(verificationParams, {
+    idempotencyKey: "k",
+    timeout: 5_000,
+  });
+  check(verification).is<IdentityVerification>();
+  check(verification.lastResponse).is<RayaResponse | null>();
+  check(verification.id).is<string>();
+  check(verification.object).is<"identity.verification">();
+  check(verification.type).is<IdentityVerificationType>();
+  check(verification.type).is<"document" | "biometric">();
+  check(verification.status).is<IdentityVerificationStatus>();
+  check(verification.status).is<
+    "pending" | "in_progress" | "processing" | "verified" | "declined" | "expired" | "canceled"
+  >();
+  check(verification.url).is<string>();
+  check(verification.external_reference).is<string | null>();
+  check(verification.metadata).is<Record<string, string>>();
+  check(verification.return_url).is<string | null>();
+  check(verification.reference).is<string | null>();
+  check(verification.decline_reason).is<IdentityVerification.DeclineReason | null>();
+  check(verification.decline_reason?.code).is<IdentityVerificationDeclineCode>();
+  check(verification.decline_reason?.code).is<
+    | "face_mismatch"
+    | "registry_not_found"
+    | "registry_data_mismatch"
+    | "registry_unavailable"
+    | "attempts_exhausted"
+  >();
+  check(verification.checks).is<IdentityVerification.Checks>();
+  check(verification.checks.document).is<IdentityVerification.DocumentCheck>();
+  check(verification.checks.liveness).is<IdentityVerification.LivenessCheck>();
+  check(verification.checks.face_match).is<IdentityVerification.FaceMatchCheck>();
+  check(verification.checks.registry).is<IdentityVerification.RegistryCheck>();
+  check(verification.checks.registry.status).is<IdentityVerificationCheckStatus>();
+  check(verification.checks.registry.status).is<
+    "passed" | "failed" | "pending" | "unavailable" | "not_applicable"
+  >();
+  check(verification.checks.registry.data_match).is<boolean | null>();
+  check(verification.checks.registry.face_match).is<"hit" | "accepted" | "failed" | null>();
+  check(verification.checks.liveness.confidence).is<number | null>();
+  check(verification.checks.face_match.similarity).is<number | null>();
+  check(verification.person).is<IdentityVerification.Person | null>();
+  check(verification.person?.address).is<IdentityVerification.Address>();
+  check(verification.person?.document).is<IdentityVerification.IdentityDocument>();
+  check(verification.person?.address.city).is<string | null>();
+  check(verification.person?.cuil).is<string | null>();
+  check(verification.amount).is<number | null>();
+  check(verification.currency).is<"ARS">();
+  check(verification.created_at).is<string>();
+  check(verification.completed_at).is<string | null>();
+  check(verification.expires_at).is<string>();
+  check(await client.identity.verifications.retrieve("idv_x")).is<IdentityVerification>();
+  check(
+    await client.identity.verifications.create({ type: "biometric", reference: "idv_x" }),
+  ).is<IdentityVerification>();
+  const verificationFilters: IdentityVerificationListParams = {
+    status: "verified",
+    type: "document",
+    external_reference: "cliente-8812",
+    created_gte: new Date(),
+    created_lt: "2026-11-11T00:00:00-03:00",
+    limit: 100,
+    cursor: "c1",
+  };
+  const verifications = await client.identity.verifications.list(verificationFilters);
+  check(verifications).is<ListObject<IdentityVerification>>();
+  check(verifications.data).is<IdentityVerification[]>();
+  for (const item of verifications) check(item).is<IdentityVerification>();
+  for await (const item of verifications.autoPagingIter()) check(item).is<IdentityVerification>();
+  check(await verifications.nextPage()).is<ListObject<IdentityVerification>>();
+  check(await client.identity.verifications.list()).is<ListObject<IdentityVerification>>();
+  check(
+    await client.identity.verifications.cancel("idv_x", { idempotencyKey: "c" }),
+  ).is<IdentityVerification>();
+  check(await verification.cancel()).is<IdentityVerification>();
+  check(await verification.cancel({ idempotencyKey: "c" })).is<IdentityVerification>();
+  const files = await client.identity.verifications.files("idv_x");
+  check(files).is<IdentityVerificationFiles>();
+  check(files.object).is<"identity.verification_files">();
+  check(files.front).is<IdentityVerificationFiles.File | null>();
+  check(files.back).is<IdentityVerificationFiles.File | null>();
+  check(files.selfie).is<IdentityVerificationFiles.File | null>();
+  check(files.selfie?.url).is<string>();
+  check(files.selfie?.expires_at).is<string>();
+
+  // Sandbox: con la clave secreta de prueba.
+  check(client.testHelpers).is<SandboxHelpersService>();
+  check(client.testHelpers.payments).is<SandboxPaymentHelpersService>();
+  const simulated = await client.testHelpers.payments.simulateTransfer("id");
+  check(simulated).is<Payment | ConnectOrder>();
+  check(simulated.status).is<"pending" | "succeeded" | "failed" | "expired" | "refunded">();
+  check(simulated.failure_code).is<"amount_mismatch" | null>();
+  if (simulated instanceof GlobalConnectOrder) check(simulated).is<ConnectOrder>();
+  const simulateParams: PaymentSimulateTransferParams = { amount: "1500.50" };
+  check(
+    await client.testHelpers.payments.simulateTransfer("id", simulateParams, { timeout: 5_000 }),
+  ).is<Payment | ConnectOrder>();
+  check(await client.testHelpers.payments.simulateTransfer("id", null)).is<
+    Payment | ConnectOrder
+  >();
+  check(await client.testHelpers.payments.simulateTransfer("id", { amount: null })).is<
+    Payment | ConnectOrder
+  >();
+
   const event = client.constructEvent(Buffer.from("{}"), "t=1,v1=x", "whsec_x");
   check(event).is<Event>();
-  check(event.data.object).is<Transfer | Payment | ConnectOrder | RayaObject>();
+  // Puede faltar: un evento emitido antes de que la API lo sumara, si se reenvía.
+  check<typeof event.livemode>().is<boolean | undefined>();
+  check<Event["livemode"]>().is<boolean | undefined>();
+  check(event.data.object).is<
+    Transfer | Payment | ConnectOrder | IdentityVerification | RayaObject
+  >();
+  check<Extract<EventType, `identity.${string}`>>().is<
+    | "identity.verification.verified"
+    | "identity.verification.declined"
+    | "identity.verification.expired"
+    | "identity.verification.canceled"
+  >();
+  const object = event.data.object;
+  if (object instanceof GlobalIdentityVerification) check(object).is<IdentityVerification>();
 
   // @ts-expect-error: la idempotencyKey es obligatoria en transfers.create.
   await client.transfers.create({ amount: 1, destination: "x" });
@@ -166,6 +355,47 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   await client.connect.orders.create({ items: [], auto_return: "all" });
   // @ts-expect-error: unit_price no acepta booleans.
   await client.connect.orders.create({ items: [{ title: "x", quantity: 1, unit_price: true }] });
+  // @ts-expect-error: la idempotencyKey es obligatoria en connect.payouts.create.
+  await client.connect.payouts.create({ amount: 1, destination: "x" });
+  // @ts-expect-error: va en las opciones, no en los parámetros.
+  await client.connect.payouts.create({ amount: 1, destination: "x", idempotencyKey: "k" }, key);
+  await client.connect.payouts.create(
+    // @ts-expect-error: el body es amount y destination, nada más.
+    { amount: 1, destination: "x", external_reference: "l" },
+    key,
+  );
+  // @ts-expect-error: destination es un string, para que un CBU no pierda los ceros de adelante.
+  await client.connect.payouts.create({ amount: 1, destination: 123 }, key);
+  // @ts-expect-error: los payouts no tienen direction.
+  await client.connect.payouts.list({ direction: "outbound" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.connect.payouts.retrieve("id", { idempotencyKey: "k" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.identity.verifications.retrieve("idv_x", { idempotencyKey: "k" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.identity.verifications.files("idv_x", { idempotencyKey: "k" });
+  // @ts-expect-error: type es obligatorio.
+  await client.identity.verifications.create({});
+  // @ts-expect-error: selfie no es un tipo de verificación.
+  await client.identity.verifications.create({ type: "selfie" });
+  // @ts-expect-error: va en las opciones, no en los parámetros.
+  await client.identity.verifications.create({ type: "document", idempotencyKey: "k" });
+  // @ts-expect-error: metadata es de string a string.
+  await client.identity.verifications.create({ type: "document", metadata: { plan: 1 } });
+  // @ts-expect-error: open no es un estado de la lista pública.
+  await client.identity.verifications.list({ status: "open" });
+  // @ts-expect-error: limit es un número.
+  await client.identity.verifications.list({ limit: "10" });
+  // @ts-expect-error: las verificaciones no tienen direction.
+  await client.identity.verifications.list({ direction: "inbound" });
+  // @ts-expect-error: el helper del sandbox no lleva Idempotency-Key.
+  await client.testHelpers.payments.simulateTransfer("id", {}, { idempotencyKey: "k" });
+  // @ts-expect-error: el único parámetro es amount.
+  await client.testHelpers.payments.simulateTransfer("id", { status: "succeeded" });
+  // @ts-expect-error: amount no acepta booleans.
+  await client.testHelpers.payments.simulateTransfer("id", { amount: true });
+  // @ts-expect-error: el id es un string.
+  await client.testHelpers.payments.simulateTransfer(1234);
 }
 
 export async function globalStyle(): Promise<void> {
@@ -183,6 +413,10 @@ export async function globalStyle(): Promise<void> {
   check(await payment.refund()).is<Payment>();
   check(await GlobalPayment.refund("id")).is<Payment>();
   check(GlobalPayment.constructFrom({ object: "payment" })).is<Payment>();
+  check(await GlobalPayment.simulateTransfer("id")).is<Payment | ConnectOrder>();
+  check(await GlobalPayment.simulateTransfer("id", { amount: 1000 })).is<Payment | ConnectOrder>();
+  // @ts-expect-error: tampoco en el estilo global: el helper no lleva Idempotency-Key.
+  await GlobalPayment.simulateTransfer("id", null, { idempotencyKey: "k" });
 
   const token = await GlobalOAuth.token({
     client_id: "7650337728110670",
@@ -202,6 +436,36 @@ export async function globalStyle(): Promise<void> {
   check(await GlobalConnectOrder.refund("id")).is<ConnectOrder>();
   check(await order.refund()).is<ConnectOrder>();
   check(GlobalConnectOrder.constructFrom({ object: "connect.order" })).is<ConnectOrder>();
+
+  const payout = await GlobalConnectPayout.create(
+    { amount: 60000, destination: "ana.ejemplo" },
+    { idempotencyKey: "k" },
+  );
+  check(payout).is<ConnectPayout>();
+  check(await GlobalConnectPayout.retrieve("id")).is<ConnectPayout>();
+  check(await GlobalConnectPayout.list({ status: "failed" })).is<ListObject<ConnectPayout>>();
+  check(GlobalConnectPayout.constructFrom({ object: "connect.payout" })).is<ConnectPayout>();
+  // @ts-expect-error: tampoco en el estilo global: la idempotencyKey es obligatoria.
+  await GlobalConnectPayout.create({ amount: 1, destination: "x" });
+
+  const verification = await GlobalIdentityVerification.create({ type: "document" });
+  check(verification).is<IdentityVerification>();
+  check(
+    await GlobalIdentityVerification.create({ type: "document" }, { idempotencyKey: "k" }),
+  ).is<IdentityVerification>();
+  check(await GlobalIdentityVerification.retrieve("idv_x")).is<IdentityVerification>();
+  check(await GlobalIdentityVerification.list()).is<ListObject<IdentityVerification>>();
+  check(await GlobalIdentityVerification.list({ status: "declined" })).is<
+    ListObject<IdentityVerification>
+  >();
+  check(await GlobalIdentityVerification.cancel("idv_x")).is<IdentityVerification>();
+  check(await GlobalIdentityVerification.files("idv_x")).is<IdentityVerificationFiles>();
+  check(await verification.cancel()).is<IdentityVerification>();
+  check(
+    GlobalIdentityVerification.constructFrom({ object: "identity.verification" }),
+  ).is<IdentityVerification>();
+  // @ts-expect-error: tampoco en el estilo global: los GET no llevan idempotencyKey.
+  await GlobalIdentityVerification.retrieve("idv_x", { idempotencyKey: "k" });
 }
 
 // Los nombres de la 1.1.0, deprecados hasta la 2.0.0: el código escrito para la 1.1.0 tiene que

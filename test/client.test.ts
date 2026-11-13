@@ -20,7 +20,8 @@ import {
   OAUTH_CODE,
   PAYMENT_REFUNDED,
   REDIRECT_URI,
-  TEST_MODE_ACCESS_TOKEN,
+  SANDBOX_ACCESS_TOKEN,
+  SANDBOX_SECRET_KEY,
   TRANSFER_LIST,
   USER,
   WEBHOOK_SECRET,
@@ -118,22 +119,59 @@ test("console.log enmascara también un access_token", () => {
   assert.ok(!JSON.stringify(client).includes(ACCESS_TOKEN));
 });
 
-test("el access_token de prueba de una app vale como clave y conserva su prefijo", async () => {
-  // El de Developers › Apps › tu app › Test: viaja como el de una cuenta conectada, y la máscara
-  // conserva su prefijo y sus últimos 4.
+test("el access_token de un usuario de prueba vale como clave y conserva su prefijo", async () => {
+  // El de un sandbox: viaja como el de una cuenta conectada, y la máscara conserva su prefijo y
+  // sus últimos 4.
   const api = new MockAPI();
   api.add(200, USER);
-  const client = api.client(TEST_MODE_ACCESS_TOKEN);
+  const client = api.client(SANDBOX_ACCESS_TOKEN);
   await client.users.retrieve("me");
-  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_MODE_ACCESS_TOKEN}`);
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${SANDBOX_ACCESS_TOKEN}`);
   assert.equal(
     util.inspect(client),
-    "RayaClient { apiBase: 'https://api.raya.cash', apiKey: 'raya_at_test_…L0sA' }",
+    "RayaClient { apiBase: 'https://api.raya.cash', apiKey: 'raya_at_test_…hgfe' }",
   );
-  assert.equal(client.toJSON().apiKey, "raya_at_test_…L0sA");
-  assert.ok(!JSON.stringify(client).includes(TEST_MODE_ACCESS_TOKEN));
+  assert.equal(client.toJSON().apiKey, "raya_at_test_…hgfe");
+  assert.ok(!JSON.stringify(client).includes(SANDBOX_ACCESS_TOKEN));
   // Con 8 caracteres o menos después del prefijo, solo el prefijo.
   assert.equal(new RayaClient("raya_at_test_12345678").toJSON().apiKey, "raya_at_test_…");
+});
+
+test("la clave secreta de prueba de un sandbox vale como clave y conserva su prefijo", async () => {
+  // Va a la misma apiBase que la real: la clave decide el entorno. La máscara es la de una clave
+  // real, con su prefijo de prueba.
+  const api = new MockAPI();
+  api.add(200, BALANCE);
+  const client = api.client(SANDBOX_SECRET_KEY);
+  await client.balance.retrieve();
+  assert.equal(api.last.url.href, "https://api.raya.cash/v1/balance");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${SANDBOX_SECRET_KEY}`);
+  assert.equal(
+    util.inspect(client),
+    "RayaClient { apiBase: 'https://api.raya.cash', apiKey: 'raya_sk_test_…IJKL' }",
+  );
+  assert.equal(client.toJSON().apiKey, "raya_sk_test_…IJKL");
+  assert.ok(!JSON.stringify(client).includes(SANDBOX_SECRET_KEY));
+  assert.ok(!util.inspect(client).includes(SANDBOX_SECRET_KEY));
+  assert.equal(new RayaClient("raya_sk_test_12345678").toJSON().apiKey, "raya_sk_test_…");
+  // También desde RAYA_SECRET_KEY y por llamada.
+  process.env.RAYA_SECRET_KEY = SANDBOX_SECRET_KEY;
+  assert.equal(new RayaClient().toJSON().apiKey, "raya_sk_test_…IJKL");
+  api.add(200, BALANCE);
+  await api.client().balance.retrieve({ apiKey: SANDBOX_SECRET_KEY });
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${SANDBOX_SECRET_KEY}`);
+});
+
+test("la clave pública de prueba se rechaza como la real, sin mandar nada", async () => {
+  const error = thrown(() => new RayaClient(`raya_pk_test_${"a".repeat(48)}`));
+  assert.ok(error instanceof AuthenticationError);
+  assert.equal(error.code, "API_KEY_PUBLISHABLE_NOT_ALLOWED");
+  const api = new MockAPI();
+  const rejected = await rejection(
+    api.client().balance.retrieve({ apiKey: `raya_pk_test_${"a".repeat(48)}` }),
+  );
+  assert.equal(rejected.code, "API_KEY_PUBLISHABLE_NOT_ALLOWED");
+  assert.deepEqual(api.requests, []);
 });
 
 test("la clave tiene que ser un string", () => {

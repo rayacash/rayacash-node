@@ -7,7 +7,10 @@ import type { APIRequestor } from "./requestor.ts";
 export interface OAuthTokenParams {
   /** El número de tu aplicación (16 dígitos), de Developers › Apps. Siempre como string. */
   client_id: string;
-  /** El `client_secret` de tu aplicación (`raya_cs_live_…`). Solo en tu servidor. */
+  /**
+   * El `client_secret` de tu aplicación (`raya_cs_live_…`; en una app de un sandbox, su
+   * `raya_cs_test_…`). Solo en tu servidor.
+   */
   client_secret: string;
   /** El `code` que recibiste en tu `redirect_uri`: dura 10 minutos y se canjea una sola vez. */
   code: string;

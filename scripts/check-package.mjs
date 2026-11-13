@@ -12,7 +12,8 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
 const KEY = "raya_sk_live_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL";
 
 // Lo que exporta el paquete en runtime: lo de la 1.1.0 (Checkout es el alias deprecado de
-// ConnectOrder, hasta la 2.0.0) más ConnectOrder. Sacar un nombre rompe el código de alguien.
+// ConnectOrder, hasta la 2.0.0) más ConnectOrder, ConnectPayout, IdentityVerification e
+// IdentityVerificationFiles. Sacar un nombre rompe el código de alguien.
 const NAMES = [
   "APIConnectionError",
   "APIError",
@@ -21,9 +22,12 @@ const NAMES = [
   "Checkout",
   "ConflictError",
   "ConnectOrder",
+  "ConnectPayout",
   "DEFAULT_API_BASE",
   "Event",
   "IdempotencyError",
+  "IdentityVerification",
+  "IdentityVerificationFiles",
   "InvalidRequestError",
   "ListObject",
   "NotFoundError",
@@ -67,6 +71,18 @@ async function fakeFetch(url, init) {
   });
 }
 
+// Identidad: client.identity llega a dist y su respuesta se hidrata como IdentityVerification.
+/** @param {string} url @param {RequestInit} init */
+async function identityFetch(url, init) {
+  assert.equal(url, "https://api.raya.cash/v1/identity/verifications/idv_check");
+  assert.equal(init.method, "GET");
+  const verification = { id: "idv_check", object: "identity.verification", status: "pending" };
+  return new Response(JSON.stringify(verification), {
+    status: 200,
+    headers: { "Raya-Request-Id": "req_check_identity" },
+  });
+}
+
 // Por el nombre del paquete (self-reference), como lo cargaría quien lo instala.
 const esm = await import("rayacash");
 const cjs = require("rayacash");
@@ -85,6 +101,10 @@ for (const [format, sdk] of Object.entries({ esm, cjs: /** @type {typeof esm} */
     /^APIError: x$/,
     `${format}: los errores tienen su name`,
   );
+  const identity = new sdk.RayaClient(KEY, { fetch: identityFetch }).identity;
+  const verification = await identity.verifications.retrieve("idv_check");
+  assert.ok(verification instanceof sdk.IdentityVerification, `${format}: IdentityVerification`);
+  assert.equal(verification.lastResponse?.requestId, "req_check_identity");
   // Los alias de la 1.1.0 son los mismos objetos que los de Raya Connect; client.checkout avisa
   // una vez (cada formato es una copia, con sus propios avisos).
   assert.equal(sdk.Checkout, sdk.ConnectOrder, `${format}: Checkout`);

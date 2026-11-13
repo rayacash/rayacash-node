@@ -3,6 +3,7 @@ import { beforeEach, test } from "node:test";
 
 import {
   Event,
+  IdentityVerification,
   Payment,
   RayaObject,
   SignatureVerificationError,
@@ -12,6 +13,12 @@ import {
 import { timing } from "../src/retry.ts";
 import {
   EVENT_PAYMENT_SUCCEEDED,
+  EVENT_SANDBOX_PAYMENT_SUCCEEDED,
+  EVENT_VERIFICATION_VERIFIED,
+  VERIFICATION_CANCELED,
+  VERIFICATION_DECLINED,
+  VERIFICATION_PENDING,
+  VERIFICATION_VERIFIED,
   WEBHOOK_OLD_SECRET,
   WEBHOOK_OLD_SIGNATURE,
   WEBHOOK_SECRET,
@@ -289,4 +296,70 @@ test("generateHeader con un timestamp explícito", () => {
   assert.ok(
     thrown(() => untypedGenerate(WEBHOOK_TEST_BODY, WEBHOOK_SECRET, T)) instanceof TypeError,
   );
+});
+
+// --- Identidad --------------------------------------------------------------------------------
+
+test("constructEvent con identity.verification.verified: una IdentityVerification sin person", () => {
+  const body = Buffer.from(JSON.stringify(EVENT_VERIFICATION_VERIFIED));
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+  assert.equal(event.constructor, Event);
+  assert.equal(event.id, "evt_7cW2pL9xT4bN6kR1mZ8vH3jQ");
+  assert.equal(event.type, "identity.verification.verified");
+  const verification = event.data.object;
+  assert.ok(verification instanceof IdentityVerification);
+  assert.equal(verification.status, "verified");
+  assert.equal(verification.checks.registry.face_match, "hit");
+  assert.equal(verification.person, null); // en los eventos, siempre null: pedila con retrieve
+  assert.deepEqual(verification.metadata, { plan: "pro" });
+});
+
+const IDENTITY_EVENTS: Array<[string, Record<string, unknown>]> = [
+  ["identity.verification.verified", { ...VERIFICATION_VERIFIED, person: null }],
+  ["identity.verification.declined", VERIFICATION_DECLINED],
+  [
+    "identity.verification.expired",
+    { ...VERIFICATION_PENDING, status: "expired", completed_at: VERIFICATION_PENDING.expires_at },
+  ],
+  ["identity.verification.canceled", VERIFICATION_CANCELED],
+];
+
+for (const [type, object] of IDENTITY_EVENTS) {
+  test(`constructEvent con ${type}: data.object es una IdentityVerification`, () => {
+    const body = JSON.stringify({ ...EVENT_VERIFICATION_VERIFIED, type, data: { object } });
+    const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+    const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+    assert.equal(event.type, type);
+    const verification = event.data.object;
+    assert.ok(verification instanceof IdentityVerification);
+    assert.equal(verification.status, object.status);
+    assert.equal(verification.person, null);
+    assert.deepEqual(JSON.parse(JSON.stringify(verification)), object);
+  });
+}
+
+// --- Sandbox ----------------------------------------------------------------------------------
+
+test("constructEvent con un evento de un sandbox: livemode en false", () => {
+  const body = Buffer.from(JSON.stringify(EVENT_SANDBOX_PAYMENT_SUCCEEDED));
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+  assert.equal(event.constructor, Event);
+  assert.equal(event.livemode, false);
+  assert.equal(event.type, "payment.succeeded");
+  const payment = event.data.object;
+  assert.ok(payment instanceof Payment);
+  assert.equal(payment.bank_transfer.alias, "sandbox.no.transferir");
+  assert.deepEqual(JSON.parse(JSON.stringify(event)), EVENT_SANDBOX_PAYMENT_SUCCEEDED);
+});
+
+test("constructEvent con un evento sin livemode (de antes de que existiera): undefined", () => {
+  // Un reenvío lleva el body guardado: sin livemode. Se arma igual, y es de una cuenta real.
+  const body = Buffer.from(JSON.stringify(EVENT_PAYMENT_SUCCEEDED));
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+  assert.equal(event.livemode, undefined);
+  assert.equal(event.livemode ?? true, true);
+  assert.equal(event.data.object.constructor, Payment);
 });

@@ -100,10 +100,10 @@ afterEach(() => {
 test("todo lo que exportaba la 1.1.0 sigue exportado", () => {
   const names = Object.keys(sdk);
   for (const name of EXPORTS_1_1_0) assert.ok(names.includes(name), name);
-  // Y lo único nuevo es ConnectOrder.
+  // Y lo único nuevo son ConnectOrder, ConnectPayout y las clases de Identidad.
   assert.deepEqual(
     names.filter((name) => !EXPORTS_1_1_0.includes(name)),
-    ["ConnectOrder"],
+    ["ConnectOrder", "ConnectPayout", "IdentityVerification", "IdentityVerificationFiles"],
   );
 });
 

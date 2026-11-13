@@ -183,6 +183,12 @@ export interface RequestParts {
    * genera una Idempotency-Key (el servidor no la usa ahí).
    */
   auth?: boolean;
+  /**
+   * `false` en un POST autenticado que el servidor no deduplica con Idempotency-Key
+   * (`testHelpers.payments.simulateTransfer`): va con `Authorization`, pero no se genera la clave.
+   * Repetirlo no duplica nada: el servidor responde 409.
+   */
+  idempotent?: boolean;
 }
 
 function nameOf(error: unknown): unknown {
@@ -289,9 +295,10 @@ export class APIRequestor {
     if (verb === "POST") {
       if (opts.idempotencyKey !== undefined) {
         idempotencyKey = validateIdempotencyKey(opts.idempotencyKey);
-      } else if (parts.auth !== false) {
+      } else if (parts.auth !== false && parts.idempotent !== false) {
         // Una sola clave por llamada, la misma en cada reintento: nunca se ejecuta dos veces. Sin
-        // autenticación (oauth.token) no se genera: el servidor no la usa ahí, como en Python y PHP.
+        // autenticación (oauth.token) o con `idempotent: false` (el helper del sandbox) no se
+        // genera: el servidor no la usa ahí, como en Python y PHP.
         idempotencyKey = randomUUID();
       }
       if (idempotencyKey !== null) headers["Idempotency-Key"] = idempotencyKey;

@@ -21,7 +21,11 @@ import { isolate } from "./helpers.ts";
 
 isolate();
 
-// Los 43 códigos del contrato (api.md › Códigos de error).
+// Los 51 códigos del contrato (api.md › Códigos de error), con los 3 del sandbox:
+// SANDBOX_NOT_SUPPORTED (una credencial de prueba en un endpoint que todavía no está disponible en
+// el sandbox, como Identidad), SANDBOX_ONLY (una credencial real en /v1/test/*) y
+// PAYMENT_NOT_PENDING (simular la transferencia de un pago que ya no está pendiente), e
+// IDENTITY_NOT_ACTIVATED (crear una verificación sin Identidad activada), al final de los 403.
 const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["INVALID_JSON", 400, InvalidRequestError],
   ["PARAMETER_MISSING", 400, InvalidRequestError],
@@ -44,15 +48,23 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["CONNECTED_ACCOUNT_LOCKED", 403, PermissionDeniedError],
   ["CONNECTED_ACCOUNT_NOT_CONFIGURED", 403, PermissionDeniedError],
   ["APP_DISABLED", 403, PermissionDeniedError],
+  ["PAYOUT_ORIGIN_UNAVAILABLE", 403, PermissionDeniedError],
+  ["SANDBOX_NOT_SUPPORTED", 403, PermissionDeniedError],
+  ["SANDBOX_ONLY", 403, PermissionDeniedError],
+  ["IDENTITY_NOT_ACTIVATED", 403, PermissionDeniedError],
   ["TRANSFER_NOT_FOUND", 404, NotFoundError],
   ["PAYMENT_NOT_FOUND", 404, NotFoundError],
   ["NOT_FOUND", 404, NotFoundError],
   ["USER_NOT_FOUND", 404, NotFoundError],
   ["ORDER_NOT_FOUND", 404, NotFoundError],
+  ["PAYOUT_NOT_FOUND", 404, NotFoundError],
+  ["VERIFICATION_NOT_FOUND", 404, NotFoundError],
   ["METHOD_NOT_ALLOWED", 405, InvalidRequestError],
   ["IDEMPOTENCY_KEY_REUSED", 409, IdempotencyError],
   ["IDEMPOTENCY_KEY_IN_USE", 409, IdempotencyError],
   ["PAYMENT_NOT_REFUNDABLE", 409, ConflictError],
+  ["PAYMENT_NOT_PENDING", 409, ConflictError],
+  ["VERIFICATION_NOT_CANCELABLE", 409, ConflictError],
   ["REQUEST_TOO_LARGE", 413, InvalidRequestError],
   ["INSUFFICIENT_BALANCE", 422, UnprocessableEntityError],
   ["LIMIT_EXCEEDED", 422, UnprocessableEntityError],
@@ -82,8 +94,9 @@ function makeError(
   });
 }
 
-test("el catálogo tiene los 43 códigos", () => {
-  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 43);
+test("el catálogo tiene los 51 códigos", () => {
+  assert.equal(CATALOG.length, 51);
+  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 51);
 });
 
 for (const [code, status, ErrorType] of CATALOG) {
@@ -170,6 +183,70 @@ test("CONNECTED_ACCOUNT_LOCKED trae la razón, como API_KEY_ACCOUNT_LOCKED", () 
   });
   assert.equal(error.constructor, PermissionDeniedError);
   assert.deepEqual(error.data, { reason: "user_blocked" });
+});
+
+test("PAYMENT_NOT_PENDING lleva el estado del pago en data", () => {
+  const error = makeError(409, {
+    error: {
+      code: "PAYMENT_NOT_PENDING",
+      message: "Solo podés simular la transferencia de un pago pendiente.",
+      data: { status: "expired" },
+    },
+  });
+  assert.equal(error.constructor, ConflictError);
+  assert.equal(error.code, "PAYMENT_NOT_PENDING");
+  assert.deepEqual(error.data, { status: "expired" });
+});
+
+test("SANDBOX_ONLY y SANDBOX_NOT_SUPPORTED son PermissionDeniedError, sin data", () => {
+  const only = makeError(403, {
+    error: {
+      code: "SANDBOX_ONLY",
+      message: "Este endpoint solo funciona en un sandbox: usá una credencial de prueba.",
+      data: null,
+    },
+  });
+  assert.equal(only.constructor, PermissionDeniedError);
+  assert.equal(only.data, null);
+  const notSupported = makeError(403, {
+    error: {
+      code: "SANDBOX_NOT_SUPPORTED",
+      message: "Este endpoint todavía no está disponible en un sandbox.",
+      data: null,
+    },
+  });
+  assert.equal(notSupported.constructor, PermissionDeniedError);
+  assert.equal(notSupported.code, "SANDBOX_NOT_SUPPORTED");
+});
+
+test("VERIFICATION_NOT_CANCELABLE lleva el estado de la verificación en data", () => {
+  const error = makeError(409, {
+    error: {
+      code: "VERIFICATION_NOT_CANCELABLE",
+      message: "Solo podés cancelar verificaciones pending o in_progress.",
+      data: { status: "processing" },
+    },
+  });
+  assert.equal(error.constructor, ConflictError);
+  assert.equal(error.code, "VERIFICATION_NOT_CANCELABLE");
+  assert.deepEqual(error.data, { status: "processing" });
+});
+
+test("el tope de verificaciones de Identidad: RATE_LIMITED con limit y Retry-After", () => {
+  const error = makeError(
+    429,
+    {
+      error: {
+        code: "RATE_LIMITED",
+        message: "Llegaste al máximo de verificaciones abiertas.",
+        data: { limit: "open" },
+      },
+    },
+    { "Retry-After": "3600" },
+  );
+  assert.equal(error.constructor, RateLimitError);
+  assert.equal(error.retryAfter, 3600);
+  assert.deepEqual(error.data, { limit: "open" });
 });
 
 const UNKNOWN_CODES: Array<[number, string, typeof RayaError]> = [

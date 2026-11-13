@@ -15,7 +15,10 @@ export class OAuthToken extends RayaObject {
   static override readonly OBJECT_NAME = "oauth_token";
 
   declare object: "oauth_token";
-  /** `raya_at_live_…`: va en `Authorization: Bearer`, como una clave secreta. Es un secreto. */
+  /**
+   * `raya_at_live_…` (`raya_at_test_…` si es un usuario de prueba de un sandbox): va en
+   * `Authorization: Bearer`, como una clave secreta. Es un secreto.
+   */
   declare access_token: string;
   /** Siempre `"Bearer"`. */
   declare token_type: string;

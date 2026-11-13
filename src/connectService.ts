@@ -1,13 +1,22 @@
 import type { ConnectOrder } from "./connectOrder.ts";
+import type { ConnectPayout, ConnectPayoutStatus } from "./connectPayout.ts";
 import {
   type Amount,
   canonicalAmount,
   checkParams,
+  encodeQuery,
   isPlainObject,
   pathId,
   typeName,
+  validateIdempotencyKey,
 } from "./encoding.ts";
-import type { PostRequestOptions, RequestOptions } from "./requestOptions.ts";
+import type { ListObject } from "./listObject.ts";
+import {
+  type ConnectPayoutCreateOptions,
+  type PostRequestOptions,
+  type RequestOptions,
+  validateOptions,
+} from "./requestOptions.ts";
 import type { APIRequestor } from "./requestor.ts";
 
 /** Un ítem de lo que se cobra. */
@@ -63,6 +72,35 @@ export interface ConnectOrderCreateParams {
    * ocupa un CVU del comercio: no lo alargues más de lo necesario.
    */
   expires_in?: number | null;
+}
+
+export interface ConnectPayoutCreateParams {
+  /**
+   * Lo que sale de tu saldo, en pesos, hasta 2 decimales: `60000`, `"60000.50"` o un `Decimal`. La
+   * comisión se descuenta de acá.
+   */
+  amount: Amount;
+  /**
+   * A dónde enviarlo: un CBU o CVU (22 dígitos) o un alias (6 a 20 caracteres), siempre como
+   * string. El titular lo buscamos nosotros y te lo devolvemos en `counterparty`.
+   */
+  destination: string;
+}
+
+export interface ConnectPayoutListParams {
+  /** `pending`, `completed`, `failed` o `reversed`. */
+  status?: ConnectPayoutStatus | null;
+  /** Desde este momento (incluido): un `Date` o un string ISO 8601 con zona. */
+  created_gte?: string | Date | null;
+  /**
+   * Hasta este momento (excluido). Con `created_gte` arma un rango semiabierto: los días o meses
+   * seguidos no se pisan.
+   */
+  created_lt?: string | Date | null;
+  /** De 1 a 100 por página (por defecto, 20). */
+  limit?: number | null;
+  /** El `next_cursor` de la página anterior. */
+  cursor?: string | null;
 }
 
 const CREATE_PARAMS = [
@@ -145,6 +183,33 @@ function orderPath(orderId: string): string {
   return `/v1/connect/orders/${pathId("orderId", orderId)}`;
 }
 
+const PAYOUT_CREATE_PARAMS = ["amount", "destination"] as const;
+const PAYOUT_LIST_PARAMS = ["status", "created_gte", "created_lt", "limit", "cursor"] as const;
+
+function payoutBody(params: unknown): Record<string, unknown> {
+  const values = checkParams("connect.payouts.create", params, PAYOUT_CREATE_PARAMS);
+  const destination = values.destination;
+  if (typeof destination !== "string") {
+    throw new TypeError(
+      "destination tiene que ser un string (CBU, CVU o alias): un CBU como número pierde los " +
+        "ceros de adelante.",
+    );
+  }
+  return { amount: canonicalAmount(values.amount), destination };
+}
+
+function requirePayoutIdempotencyKey(options: unknown): void {
+  const key = validateOptions(options).idempotencyKey;
+  if (key === undefined) {
+    throw new TypeError(
+      "connect.payouts.create necesita idempotencyKey: generá un UUID v4 con " +
+        "crypto.randomUUID(), guardalo con el payout antes de llamar y reusalo en cada " +
+        "reintento: connect.payouts.create({ amount, destination }, { idempotencyKey }).",
+    );
+  }
+  validateIdempotencyKey(key);
+}
+
 /** `client.connect.orders`: los pagos a nombre de una cuenta conectada. */
 export class ConnectOrderService {
   readonly #requestor: APIRequestor;
@@ -215,14 +280,95 @@ export class ConnectOrderService {
 }
 
 /**
- * `client.connect`: Raya Connect, para cobrar a nombre de las cuentas que conectaron tu app, con
- * tu comisión.
+ * `client.connect.payouts`: enviarles dinero a los vendedores de tu plataforma desde tu saldo. Va
+ * con tu clave secreta, no con el access_token de una cuenta conectada: la plata es tuya.
+ */
+export class ConnectPayoutService {
+  readonly #requestor: APIRequestor;
+
+  constructor(requestor: APIRequestor) {
+    this.#requestor = requestor;
+  }
+
+  /**
+   * Envía pesos desde tu saldo a un CBU, CVU o alias (`POST /v1/connect/payouts`).
+   *
+   * Descontamos `amount` de tu saldo apenas lo creás y la cuenta de destino recibe `net_amount`,
+   * que es `amount` menos `processing_fee`. Buscamos al titular y te lo devolvemos en
+   * `counterparty`: no hay paso de confirmación, así que revisá el destino antes de llamar. Si el
+   * destino es una cuenta de Raya, vuelve `completed`; si no, `pending` hasta que te avisamos con
+   * `transfer.sent` o `transfer.failed`, con el mismo `id`. Si falla, te devolvemos `amount`
+   * entero, incluida la comisión.
+   *
+   * Sale solo de tu saldo disponible: los cobros de tus pagos se suman cuando se liquidan. Si tu
+   * negocio todavía no tiene una cuenta propia para enviar, da `PermissionDeniedError` con
+   * `code === "PAYOUT_ORIGIN_UNAVAILABLE"`.
+   *
+   * La `idempotencyKey` es obligatoria: un UUID v4 que guardás con el payout **antes** de llamar y
+   * reusás en cada reintento. Así nunca se envía dos veces. Para volver a intentar un payout que
+   * terminó `failed`, usá una clave nueva.
+   */
+  async create(
+    params: ConnectPayoutCreateParams,
+    options: ConnectPayoutCreateOptions,
+  ): Promise<ConnectPayout> {
+    const body = payoutBody(params);
+    requirePayoutIdempotencyKey(options);
+    return (await this.#requestor.request(
+      "POST",
+      "/v1/connect/payouts",
+      { body },
+      options,
+      "connect.payout",
+    )) as ConnectPayout;
+  }
+
+  /**
+   * Un payout de tu cuenta (`GET /v1/connect/payouts/:id`). Si no existe, no es tuyo o es el id de
+   * una transferencia que no es un payout, da `NotFoundError` con
+   * `code === "PAYOUT_NOT_FOUND"`.
+   */
+  async retrieve(payoutId: string, options?: RequestOptions): Promise<ConnectPayout> {
+    return (await this.#requestor.request(
+      "GET",
+      `/v1/connect/payouts/${pathId("payoutId", payoutId)}`,
+      {},
+      options,
+      "connect.payout",
+    )) as ConnectPayout;
+  }
+
+  /**
+   * Tus payouts, del más nuevo al más viejo (`GET /v1/connect/payouts`).
+   *
+   * Devuelve una página. Para recorrer todas: `for await (const p of page.autoPagingIter())`.
+   */
+  async list(
+    params?: ConnectPayoutListParams,
+    options?: RequestOptions,
+  ): Promise<ListObject<ConnectPayout>> {
+    const values = checkParams("connect.payouts.list", params, PAYOUT_LIST_PARAMS);
+    const query = encodeQuery(
+      Object.fromEntries(PAYOUT_LIST_PARAMS.map((name) => [name, values[name]])),
+    );
+    const page = await this.#requestor.requestList("/v1/connect/payouts", query, options);
+    return page as ListObject<ConnectPayout>;
+  }
+}
+
+/**
+ * `client.connect`: Raya Connect. `orders` cobra a nombre de las cuentas que conectaron tu app,
+ * con tu comisión, y va con el access_token de cada cuenta; `payouts` les envía dinero a tus
+ * vendedores desde tu saldo, y va con tu clave secreta.
  */
 export class ConnectService {
-  /** `client.connect.orders.create/retrieve/refund`. */
+  /** `client.connect.orders.create/retrieve/refund`, con el access_token de la cuenta conectada. */
   readonly orders: ConnectOrderService;
+  /** `client.connect.payouts.create/retrieve/list`, con tu clave secreta. */
+  readonly payouts: ConnectPayoutService;
 
   constructor(requestor: APIRequestor) {
     this.orders = new ConnectOrderService(requestor);
+    this.payouts = new ConnectPayoutService(requestor);
   }
 }

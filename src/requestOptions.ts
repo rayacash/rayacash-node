@@ -30,6 +30,12 @@ export interface TransferCreateOptions extends RequestOptions {
   idempotencyKey: string;
 }
 
+/** Las de `connect.payouts.create`: la `idempotencyKey` es obligatoria. */
+export interface ConnectPayoutCreateOptions extends RequestOptions {
+  /** Un UUID v4 que guardás con el payout **antes** de llamar y reusás en cada reintento. */
+  idempotencyKey: string;
+}
+
 const KEYS = ["apiKey", "timeout", "maxNetworkRetries", "idempotencyKey"];
 const SNAKE_CASE: Record<string, string> = {
   api_key: "apiKey",
