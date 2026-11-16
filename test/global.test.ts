@@ -16,6 +16,10 @@ import {
   OAuth,
   OAuthToken,
   Payment,
+  PspBalance,
+  PspCustomer,
+  PspCustomerBalance,
+  PspTransfer,
   setAppInfo,
   Transfer,
   User,
@@ -29,6 +33,7 @@ import {
   CLIENT_SECRET,
   EVENT_ORDER_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
+  EVENT_PSP_CUSTOMER_ACTIVATED,
   EVENT_VERIFICATION_VERIFIED,
   OAUTH_CODE,
   OAUTH_TOKEN,
@@ -46,6 +51,21 @@ import {
   PAYOUT_ID,
   PAYOUT_LIST,
   PAYOUT_PENDING,
+  PSP_BALANCE,
+  PSP_CUSTOMER_ACTIVE,
+  PSP_CUSTOMER_BALANCE,
+  PSP_CUSTOMER_BLOCKED,
+  PSP_CUSTOMER_CLOSED,
+  PSP_CUSTOMER_ID,
+  PSP_CUSTOMER_LIST,
+  PSP_CUSTOMER_PENDING,
+  PSP_CUSTOMER_WITH_BALANCE,
+  PSP_DESTINATION,
+  PSP_INBOUND_ID,
+  PSP_TAX_ID,
+  PSP_TRANSFER_INBOUND,
+  PSP_TRANSFER_LIST,
+  PSP_TRANSFER_OUTBOUND_PENDING,
   REDIRECT_URI,
   SANDBOX_ORDER_ID,
   SANDBOX_ORDER_SUCCEEDED,
@@ -496,6 +516,207 @@ test("IdentityVerification lee RAYA_SECRET_KEY y, sin clave, falla sin mandar na
   await IdentityVerification.retrieve(VERIFICATION_ID);
   assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
 });
+
+// --- Raya PSP ---------------------------------------------------------------------------------
+
+test("Raya PSP: PspCustomer.create, retrieve, list y retrieveBalance, con la clave secreta", async () => {
+  const api = globalAPI();
+  api.add(201, PSP_CUSTOMER_ACTIVE);
+  const customer = await PspCustomer.create(
+    { identity_verification: VERIFICATION_ID, metadata: { plan: "pro" } },
+    { idempotencyKey: "alta-1" },
+  );
+  assert.equal(customer.constructor, PspCustomer);
+  // Con Raya Identity alcanza con la verificación: el CUIL y el nombre los pone la API.
+  assert.equal(customer.tax_id, PSP_TAX_ID);
+  assert.deepEqual([api.last.method, api.last.url.pathname], ["POST", "/v1/psp/customers"]);
+  assert.deepEqual(api.lastJson(), {
+    identity_verification: VERIFICATION_ID,
+    metadata: { plan: "pro" },
+  });
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(api.last.headers.get("idempotency-key"), "alta-1");
+
+  api.add(200, PSP_CUSTOMER_WITH_BALANCE);
+  assert.equal((await PspCustomer.retrieve(PSP_CUSTOMER_ID)).balance, 23649.5);
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname],
+    ["GET", `/v1/psp/customers/${PSP_CUSTOMER_ID}`],
+  );
+
+  api.add(200, PSP_CUSTOMER_LIST);
+  const page = await PspCustomer.list({ status: "active", limit: 2 });
+  assert.equal(page.constructor, ListObject);
+  assert.ok(page.data.every((item) => item instanceof PspCustomer));
+  assert.equal(api.last.url.search, "?status=active&limit=2");
+
+  api.add(200, PSP_CUSTOMER_BALANCE);
+  const balance = await PspCustomer.retrieveBalance(PSP_CUSTOMER_ID);
+  assert.equal(balance.constructor, PspCustomerBalance);
+  assert.equal(api.last.url.pathname, `/v1/psp/customers/${PSP_CUSTOMER_ID}/balance`);
+  assert.equal(api.requests.length, 4);
+});
+
+test("Raya PSP: PspCustomer.block, unblock, close y recreate por id, sin body", async () => {
+  const api = globalAPI();
+  const responses = {
+    block: PSP_CUSTOMER_BLOCKED,
+    unblock: PSP_CUSTOMER_WITH_BALANCE,
+    close: PSP_CUSTOMER_CLOSED,
+    recreate: PSP_CUSTOMER_PENDING,
+  };
+  for (const [action, response] of Object.entries(responses)) {
+    api.add(action === "recreate" ? 202 : 200, response);
+  }
+  const blocked = await PspCustomer.block(PSP_CUSTOMER_ID, { idempotencyKey: "b-1" });
+  assert.equal(blocked.status, "blocked");
+  assert.equal(api.last.headers.get("idempotency-key"), "b-1");
+  assert.equal((await PspCustomer.unblock(PSP_CUSTOMER_ID)).status, "active");
+  assert.equal((await PspCustomer.close(PSP_CUSTOMER_ID)).status, "closed");
+  const recreated = await PspCustomer.recreate(PSP_CUSTOMER_ID);
+  assert.equal(recreated.status, "pending");
+  assert.equal(recreated.lastResponse?.httpStatus, 202);
+  assert.deepEqual(
+    api.requests.map((request) => [request.method, request.url.pathname, request.body]),
+    Object.keys(responses).map((action) => [
+      "POST",
+      `/v1/psp/customers/${PSP_CUSTOMER_ID}/${action}`,
+      undefined,
+    ]),
+  );
+  for (const request of api.requests) {
+    assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+    assert.ok(request.headers.get("idempotency-key")); // la tuya o una generada por llamada
+  }
+});
+
+test("Raya PSP: PspTransfer.create, retrieve y list, y PspBalance.retrieve", async () => {
+  const api = globalAPI();
+  api.add(201, PSP_TRANSFER_OUTBOUND_PENDING);
+  const transfer = await PspTransfer.create(
+    { customer: PSP_CUSTOMER_ID, amount: "18350.50", destination: PSP_DESTINATION },
+    { idempotencyKey: "t-1" },
+  );
+  assert.equal(transfer.constructor, PspTransfer);
+  assert.deepEqual([api.last.method, api.last.url.pathname], ["POST", "/v1/psp/transfers"]);
+  assert.equal(
+    api.last.body,
+    `{"customer":"${PSP_CUSTOMER_ID}","amount":18350.5,"destination":"${PSP_DESTINATION}"}`,
+  );
+  assert.equal(api.last.headers.get("idempotency-key"), "t-1");
+
+  api.add(200, PSP_TRANSFER_INBOUND);
+  assert.equal((await PspTransfer.retrieve(PSP_INBOUND_ID)).direction, "inbound");
+  assert.equal(api.last.url.pathname, `/v1/psp/transfers/${PSP_INBOUND_ID}`);
+
+  api.add(200, PSP_TRANSFER_LIST);
+  const page = await PspTransfer.list({ customer: PSP_CUSTOMER_ID, direction: "inbound" });
+  assert.equal(page.constructor, ListObject);
+  assert.equal(api.last.url.search, `?customer=${PSP_CUSTOMER_ID}&direction=inbound`);
+
+  api.add(200, PSP_BALANCE);
+  const balance = await PspBalance.retrieve();
+  assert.equal(balance.constructor, PspBalance);
+  assert.equal(balance.customers_balance, 512875.25);
+  assert.deepEqual([api.last.method, api.last.url.pathname], ["GET", "/v1/psp/balance"]);
+  assert.equal(api.requests.length, 4);
+});
+
+test("PspTransfer.create exige la idempotencyKey y, sin clave, no manda nada", async () => {
+  const api = globalAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = PspTransfer as any;
+  let error = await rejection(
+    untyped.create({ customer: PSP_CUSTOMER_ID, amount: 1, destination: "x" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^psp\.transfers\.create necesita idempotencyKey/);
+  config.apiKey = null;
+  error = await rejection(PspBalance.retrieve());
+  assert.ok(error instanceof AuthenticationError);
+  assert.equal(error.code, "API_KEY_MISSING");
+  assert.deepEqual(api.requests, []);
+});
+
+for (const [action, response] of [
+  ["block", PSP_CUSTOMER_BLOCKED],
+  ["unblock", PSP_CUSTOMER_WITH_BALANCE],
+  ["close", PSP_CUSTOMER_CLOSED],
+  ["recreate", PSP_CUSTOMER_ACTIVE],
+] as const) {
+  test(`customer.${action}() desde la instancia devuelve un cliente nuevo`, async () => {
+    const api = globalAPI();
+    api.add(200, PSP_CUSTOMER_WITH_BALANCE);
+    const customer = await PspCustomer.retrieve(PSP_CUSTOMER_ID);
+    api.add(200, response);
+    const updated = await customer[action]();
+    assert.equal(updated.constructor, PspCustomer);
+    assert.equal(updated.status, response.status);
+    assert.equal(customer.status, "active"); // no muta el original
+    assert.deepEqual(
+      [api.last.method, api.last.url.pathname, api.last.body],
+      ["POST", `/v1/psp/customers/${PSP_CUSTOMER_ID}/${action}`, undefined],
+    );
+    assert.ok(api.last.headers.get("idempotency-key")); // generada para esta llamada
+  });
+}
+
+test("customer.close() usa el cliente del que vino", async () => {
+  const globalApi = globalAPI();
+  const otherApi = new MockAPI();
+  const client = otherApi.client(OTHER_KEY);
+  otherApi.add(200, PSP_CUSTOMER_WITH_BALANCE);
+  const customer = await client.psp.customers.retrieve(PSP_CUSTOMER_ID);
+  otherApi.add(200, PSP_CUSTOMER_CLOSED);
+  await customer.close({ idempotencyKey: "baja-1" });
+  assert.equal(otherApi.last.url.pathname, `/v1/psp/customers/${PSP_CUSTOMER_ID}/close`);
+  assert.equal(otherApi.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+  assert.equal(otherApi.last.headers.get("idempotency-key"), "baja-1");
+  assert.deepEqual(globalApi.requests, []);
+});
+
+test("los eventos psp.customer.* de Webhook.constructEvent usan el estilo global", async () => {
+  const api = globalAPI();
+  const body = JSON.stringify(EVENT_PSP_CUSTOMER_ACTIVATED);
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const customer = Webhook.constructEvent(body, header, WEBHOOK_SECRET).data.object;
+  assert.ok(customer instanceof PspCustomer);
+  api.add(200, PSP_CUSTOMER_BLOCKED);
+  await customer.block({ idempotencyKey: "b-2" });
+  assert.equal(api.last.url.pathname, `/v1/psp/customers/${PSP_CUSTOMER_ID}/block`);
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(api.last.headers.get("idempotency-key"), "b-2");
+});
+
+test("con client.constructEvent, customer.recreate() usa la clave de ese cliente", async () => {
+  const globalApi = globalAPI();
+  const otherApi = new MockAPI();
+  const body = JSON.stringify(EVENT_PSP_CUSTOMER_ACTIVATED);
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = otherApi.client(OTHER_KEY).constructEvent(body, header, WEBHOOK_SECRET);
+  const customer = event.data.object;
+  assert.ok(customer instanceof PspCustomer);
+  otherApi.add(202, PSP_CUSTOMER_PENDING);
+  await customer.recreate();
+  assert.equal(otherApi.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+  assert.deepEqual(globalApi.requests, []);
+});
+
+for (const [action, verb] of [
+  ["block", "bloquear"],
+  ["unblock", "desbloquear"],
+  ["close", "dar de baja"],
+  ["recreate", "recrear"],
+] as const) {
+  test(`customer.${action}() necesita un id`, async () => {
+    const api = globalAPI();
+    const customer = PspCustomer.constructFrom({ object: "psp.customer" });
+    const error = await rejection(customer[action]());
+    assert.ok(error instanceof RangeError);
+    assert.equal(error.message, `Este PspCustomer no tiene id: no se puede ${verb}.`);
+    assert.deepEqual(api.requests, []);
+  });
+}
 
 // --- Sandbox ----------------------------------------------------------------------------------
 

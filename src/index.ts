@@ -24,6 +24,16 @@
 //
 //   const verification = await client.identity.verifications.create({ type: "document" });
 //
+// Raya PSP (solo cuentas de empresa con Raya PSP activado): un CVU a nombre de cada
+// cliente (con Identidad alcanza con su verificación: su CUIL y su nombre salen de ahí), y
+// transferencias en su nombre con la idempotencyKey obligatoria:
+//
+//   const customer = await client.psp.customers.create({ identity_verification: verification.id });
+//   await client.psp.transfers.create(
+//     { customer: customer.id, amount: 18350.5, destination },
+//     { idempotencyKey },
+//   );
+//
 // En un sandbox, con su clave secreta de prueba (raya_sk_test_…), simular la transferencia:
 //
 //   const paid = await client.testHelpers.payments.simulateTransfer(payment.id);
@@ -99,10 +109,38 @@ export { OAuth, OAuthToken } from "./oauthToken.ts";
 export type { PaymentStatus } from "./payment.ts";
 export { Payment } from "./payment.ts";
 export type { PaymentCreateParams, PaymentService } from "./paymentService.ts";
+export { PspBalance } from "./pspBalance.ts";
+export type {
+  PspCustomerBlockedBy,
+  PspCustomerDeclineCode,
+  PspCustomerPersonType,
+  PspCustomerStatus,
+  PspCvuStatus,
+} from "./pspCustomer.ts";
+export { PspCustomer } from "./pspCustomer.ts";
+export { PspCustomerBalance } from "./pspCustomerBalance.ts";
+export type { PspDocumentRequestStatus } from "./pspDocumentRequest.ts";
+export { PspDocumentRequest } from "./pspDocumentRequest.ts";
+export type {
+  PspBalanceService,
+  PspCustomerCreateCompanyParams,
+  PspCustomerCreateParams,
+  PspCustomerCreateWithPhotosParams,
+  PspCustomerCreateWithVerificationParams,
+  PspCustomerListParams,
+  PspCustomerService,
+  PspService,
+  PspTransferCreateParams,
+  PspTransferListParams,
+  PspTransferService,
+} from "./pspService.ts";
+export type { PspTransferDirection, PspTransferStatus } from "./pspTransfer.ts";
+export { PspTransfer } from "./pspTransfer.ts";
 export { RayaObject } from "./rayaObject.ts";
 export type {
   ConnectPayoutCreateOptions,
   PostRequestOptions,
+  PspTransferCreateOptions,
   RequestOptions,
   TransferCreateOptions,
 } from "./requestOptions.ts";

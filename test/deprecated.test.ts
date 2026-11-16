@@ -100,10 +100,21 @@ afterEach(() => {
 test("todo lo que exportaba la 1.1.0 sigue exportado", () => {
   const names = Object.keys(sdk);
   for (const name of EXPORTS_1_1_0) assert.ok(names.includes(name), name);
-  // Y lo único nuevo son ConnectOrder, ConnectPayout y las clases de Identidad.
+  // Y lo único nuevo son ConnectOrder, ConnectPayout, las clases de Identidad (1.2.0) y las de
+  // Raya PSP (1.3.0).
   assert.deepEqual(
     names.filter((name) => !EXPORTS_1_1_0.includes(name)),
-    ["ConnectOrder", "ConnectPayout", "IdentityVerification", "IdentityVerificationFiles"],
+    [
+      "ConnectOrder",
+      "ConnectPayout",
+      "IdentityVerification",
+      "IdentityVerificationFiles",
+      "PspBalance",
+      "PspCustomer",
+      "PspCustomerBalance",
+      "PspDocumentRequest",
+      "PspTransfer",
+    ],
   );
 });
 

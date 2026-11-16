@@ -6,9 +6,18 @@ import {
   config,
   IdentityVerification,
   ListObject,
+  PspCustomer,
+  PspTransfer,
   type Transfer,
 } from "../src/index.ts";
-import { payoutPage, transferPage, verificationPage } from "./fixtures.ts";
+import {
+  PSP_CUSTOMER_ID,
+  payoutPage,
+  pspCustomerPage,
+  pspTransferPage,
+  transferPage,
+  verificationPage,
+} from "./fixtures.ts";
 import { isolate, MockAPI, OTHER_KEY, rejection, TEST_KEY } from "./helpers.ts";
 
 isolate();
@@ -199,5 +208,122 @@ test("IdentityVerification.list (estilo global) también pagina", async () => {
   assert.deepEqual(
     api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
     [{ external_reference: "cliente-8812" }, { external_reference: "cliente-8812", cursor: "c1" }],
+  );
+});
+
+// --- Raya PSP ---------------------------------------------------------------------------------
+
+test("psp.customers.list pagina con los mismos filtros y las mismas opciones", async () => {
+  const api = new MockAPI();
+  api.add(200, pspCustomerPage(["c1", "c2"], "k1"));
+  api.add(200, pspCustomerPage(["c3", "c4"], "k2"));
+  api.add(200, pspCustomerPage(["c5"], null));
+  const page = await api
+    .client()
+    .psp.customers.list({ status: "active", limit: 2 }, { apiKey: OTHER_KEY });
+  const ids: string[] = [];
+  for await (const customer of page.autoPagingIter()) {
+    assert.equal(customer.constructor, PspCustomer);
+    ids.push(customer.id);
+  }
+  assert.deepEqual(ids, ["c1", "c2", "c3", "c4", "c5"]);
+  assert.equal(api.requests.length, 3); // al llegar al final no pide otra página
+  assert.deepEqual(
+    api.requests.map((request) => request.url.pathname),
+    Array(3).fill("/v1/psp/customers"),
+  );
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [
+      { status: "active", limit: "2" },
+      { status: "active", limit: "2", cursor: "k1" },
+      { status: "active", limit: "2", cursor: "k2" },
+    ],
+  );
+  // Las opciones de la primera request también viajan en las siguientes.
+  assert.deepEqual(
+    new Set(api.requests.map((request) => request.headers.get("authorization"))),
+    new Set([`Bearer ${OTHER_KEY}`]),
+  );
+});
+
+test("psp.transfers.list pagina las de un cliente: la misma ruta y los mismos filtros", async () => {
+  const api = new MockAPI();
+  api.add(200, pspTransferPage(["t1", "t2"], "k1"));
+  api.add(200, pspTransferPage(["t3"], null));
+  const page = await api
+    .client()
+    .psp.transfers.list({ customer: PSP_CUSTOMER_ID, direction: "inbound", limit: 2 });
+  const ids: string[] = [];
+  for await (const transfer of page.autoPagingIter()) {
+    assert.equal(transfer.constructor, PspTransfer);
+    ids.push(transfer.id);
+  }
+  assert.deepEqual(ids, ["t1", "t2", "t3"]);
+  assert.deepEqual(
+    api.requests.map((request) => request.url.pathname),
+    ["/v1/psp/transfers", "/v1/psp/transfers"],
+  );
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [
+      { customer: PSP_CUSTOMER_ID, direction: "inbound", limit: "2" },
+      { customer: PSP_CUSTOMER_ID, direction: "inbound", limit: "2", cursor: "k1" },
+    ],
+  );
+});
+
+test("psp.customers.list: se puede cortar el recorrido y nextPage en la última no pide nada", async () => {
+  const api = new MockAPI();
+  api.add(200, pspCustomerPage(["c1", "c2"], "k1"));
+  api.add(200, pspCustomerPage(["c3"], null));
+  const page = await api.client().psp.customers.list();
+  const ids: string[] = [];
+  for await (const customer of page.autoPagingIter()) {
+    ids.push(customer.id);
+    if (ids.length === 1) break;
+  }
+  assert.deepEqual(ids, ["c1"]);
+  assert.equal(api.requests.length, 1);
+  const last = await page.nextPage();
+  assert.deepEqual(
+    [...last].map((customer) => customer.id),
+    ["c3"],
+  );
+  const empty = await last.nextPage();
+  assert.ok(empty instanceof ListObject);
+  assert.deepEqual([...empty], []);
+  assert.equal(api.requests.length, 2);
+});
+
+test("PspCustomer.list y PspTransfer.list (estilo global) también paginan", async () => {
+  const api = new MockAPI();
+  config.apiKey = TEST_KEY;
+  config.fetch = api.fetch;
+  api.add(200, pspCustomerPage(["c1"], "k1"));
+  api.add(200, pspCustomerPage(["c2"], null));
+  api.add(200, pspTransferPage(["t1"], "k2"));
+  api.add(200, pspTransferPage(["t2"], null));
+  const customers: string[] = [];
+  const page = await PspCustomer.list({ external_reference: "cliente-8812" });
+  for await (const customer of page.autoPagingIter()) customers.push(customer.id);
+  const transfers: string[] = [];
+  const transferList = await PspTransfer.list({ status: "completed" });
+  for await (const transfer of transferList.autoPagingIter()) transfers.push(transfer.id);
+  assert.deepEqual(
+    [customers, transfers],
+    [
+      ["c1", "c2"],
+      ["t1", "t2"],
+    ],
+  );
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [
+      { external_reference: "cliente-8812" },
+      { external_reference: "cliente-8812", cursor: "k1" },
+      { status: "completed" },
+      { status: "completed", cursor: "k2" },
+    ],
   );
 });

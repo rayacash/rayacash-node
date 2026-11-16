@@ -181,6 +181,154 @@ test("el sandbox: condicionado a que la cuenta lo tenga y con lo que hace falta 
   }
 });
 
+/** La sección `## <title>` del README, hasta la siguiente de su nivel. */
+function readmeSection(title: string): string {
+  const start = README.indexOf(`\n## ${title}\n`);
+  assert.ok(start > 0, `falta la sección «${title}»`);
+  const end = README.indexOf("\n## ", start + 1);
+  return README.slice(start, end < 0 ? undefined : end);
+}
+
+const PSP_CODES = [
+  "PSP_NOT_ACTIVATED",
+  "CUSTOMER_NOT_FOUND",
+  "CUSTOMER_ALREADY_EXISTS",
+  "CUSTOMER_STATUS_CONFLICT",
+  "CUSTOMER_INSUFFICIENT_BALANCE",
+  "CUSTOMER_DATA_MISMATCH",
+  "TAX_ID_NOT_REGISTERED",
+];
+
+const PSP_EVENT_TYPES = [
+  "psp.customer.activated",
+  "psp.customer.updated",
+  "psp.customer.failed",
+  "psp.customer.rejected",
+  "psp.customer.blocked",
+  "psp.customer.unblocked",
+  "psp.customer.closed",
+  "psp.transfer.received",
+  "psp.transfer.sent",
+  "psp.transfer.failed",
+  "psp.document_request.created",
+  "psp.document_request.closed",
+];
+
+test("la sección Raya PSP: entre Identidad y Raya Connect, en el índice y con la referencia", () => {
+  assert.ok(
+    README.includes(
+      "\n- [Identidad](#identidad)\n- [Raya PSP](#raya-psp)\n- [Raya Connect](#raya-connect)\n",
+    ),
+    "falta en el índice, entre Identidad y Raya Connect",
+  );
+  const start = README.indexOf("\n## Raya PSP\n");
+  assert.ok(README.indexOf("\n## Identidad\n") < start, "va después de «Identidad»");
+  assert.ok(start < README.indexOf("\n## Raya Connect\n"), "va antes de «Raya Connect»");
+  const section = readmeSection("Raya PSP");
+  for (const text of [
+    "https://raya.cash/api/psp",
+    "cuentas de empresa con Raya PSP activado",
+    '`code === "PSP_NOT_ACTIVATED"`',
+    "`SANDBOX_NOT_SUPPORTED`",
+    // Tu saldo manda: primero el tuyo y después el del cliente.
+    '`code === "INSUFFICIENT_BALANCE"`',
+    '`code === "CUSTOMER_INSUFFICIENT_BALANCE"`',
+    "`identity_verification`",
+    "`document_front_url`, `document_back_url` y `selfie_url`",
+    "`202`",
+    "existen desde la 1.3.0",
+    "examples/operar-clientes-psp.mjs",
+  ]) {
+    assert.ok(section.includes(text), text);
+  }
+  // Los 12 métodos, en la tabla.
+  for (const method of [
+    "customers.create(",
+    "customers.retrieve(",
+    "customers.list(",
+    "customers.retrieveBalance(",
+    "customers.block(",
+    "customers.unblock(",
+    "customers.close(",
+    "customers.recreate(",
+    "transfers.create(",
+    "transfers.retrieve(",
+    "transfers.list(",
+    "balance.retrieve(",
+  ]) {
+    assert.ok(section.includes(`| \`client.psp.${method}`), method);
+  }
+  for (const type of PSP_EVENT_TYPES) assert.ok(section.includes(`| \`${type}\` |`), type);
+});
+
+test("la sección Raya PSP sigue el flujo en orden", () => {
+  // Crear → webhook → retrieve → transferir → lo recibido → bloquear → listar.
+  const section = readmeSection("Raya PSP");
+  const flow = section.slice(section.indexOf("El flujo:"));
+  const positions = [
+    "psp.customers.create(",
+    "psp.customer.activated",
+    "psp.customers.retrieve(",
+    "psp.transfers.create(",
+    "psp.transfer.received",
+    "psp.customers.block(",
+    "psp.customers.list(",
+  ].map((step) => flow.indexOf(step));
+  assert.ok(
+    positions.every((position) => position >= 0),
+    String(positions),
+  );
+  assert.deepEqual(
+    positions,
+    [...positions].sort((a, b) => a - b),
+    "el flujo está desordenado",
+  );
+});
+
+test("la sección Raya PSP: sin precios, porcentajes, términos ni promesas regulatorias", () => {
+  const section = readmeSection("Raya PSP");
+  assert.doesNotMatch(section, /\$\s?\d|\bARS\s?\d|\d\s?%/, "sin precios ni porcentajes");
+  // Sin términos (enmienda A2): la API no tiene terms_accepted_at.
+  assert.doesNotMatch(section, /terms_accepted_at|términos/);
+  assert.doesNotMatch(section, /autorizad[oa]s?\b|regulad[oa]s? por/i);
+  // Todo lo nuevo, en el README, va con su nombre de la 1.3.0.
+  assert.doesNotMatch(README, /terms_accepted_at/);
+});
+
+test("la sección Raya PSP: las tres formas de crear un cliente, sin gender (enmienda A7)", () => {
+  const section = readmeSection("Raya PSP");
+  // El paso 1 crea con Raya Identity: solo identity_verification, sin los datos que salen de ahí.
+  const flow = section.slice(section.indexOf("El flujo:"));
+  const start = flow.indexOf("psp.customers.create(");
+  const call = flow.slice(start, flow.indexOf("```", start));
+  assert.match(call, /^\s+identity_verification: verification\.id,/m);
+  assert.doesNotMatch(call, /tax_id|\bname:|person_type|_url/);
+  assert.ok(section.includes("](#qué-mandar-para-crear-un-cliente)"), "el link del paso 1");
+  assert.ok(section.includes("\n### Qué mandar para crear un cliente\n"), "la subsección");
+  for (const text of [
+    "Solo `identity_verification`",
+    '`tax_id`, `name`, `person_type: "F"`, `document_front_url`, `document_back_url` y `selfie_url`',
+    '`tax_id`, `name` (su razón social) y `person_type: "J"`, sin fotos',
+    "`PspCustomerCreateWithVerificationParams`, `PspCustomerCreateWithPhotosParams` y " +
+      "`PspCustomerCreateCompanyParams`",
+  ]) {
+    assert.ok(section.includes(text), text);
+  }
+  // El sexo lo leemos del frente del DNI, y CUSTOMER_DATA_MISMATCH queda para la razón social de
+  // una persona jurídica.
+  assert.doesNotMatch(README, /gender/);
+  for (const line of README.split("\n").filter((text) => text.includes("CUSTOMER_DATA_MISMATCH"))) {
+    assert.doesNotMatch(line, /`tax_id`|el apellido/, line);
+  }
+});
+
+test("los 7 códigos de Raya PSP están en «Errores» y los 12 eventos en «Webhooks»", () => {
+  const errors = readmeSection("Errores");
+  for (const code of PSP_CODES) assert.ok(errors.includes(`\`${code}\``), code);
+  const webhooks = readmeSection("Webhooks");
+  for (const type of PSP_EVENT_TYPES) assert.ok(webhooks.includes(`\`${type}\``), type);
+});
+
 test("el README y los ejemplos: sin CDNs de terceros, el SDK de servidor viejo ni competidores", () => {
   const files = readdirSync(path.join(ROOT, "examples")).map((name) => path.join("examples", name));
   for (const file of ["README.md", ...files]) {

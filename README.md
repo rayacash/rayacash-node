@@ -1,6 +1,6 @@
 # rayacash
 
-El SDK oficial de Node.js para la [API de Raya Cash](https://raya.cash/api). Te deja cobrar por transferencia con un CVU exclusivo por pago, mandar plata a cualquier CBU, CVU o alias, consultar tu saldo, conciliar tus depósitos, verificar los webhooks, cobrar a nombre de las cuentas que conecten tu app, con tu comisión, y confirmar la identidad de tus clientes con su DNI y una prueba de vida; todo con reintentos seguros e idempotencia incluidos.
+El SDK oficial de Node.js para la [API de Raya Cash](https://raya.cash/api). Te deja cobrar por transferencia con un CVU exclusivo por pago, mandar plata a cualquier CBU, CVU o alias, consultar tu saldo, conciliar tus depósitos, verificar los webhooks, cobrar a nombre de las cuentas que conecten tu app, con tu comisión, confirmar la identidad de tus clientes con su DNI y una prueba de vida y darles un CVU a su nombre con Raya PSP; todo con reintentos seguros e idempotencia incluidos.
 
 ```js
 import { RayaClient } from "rayacash";
@@ -11,7 +11,7 @@ const payment = await client.payments.create({ amount: 15000, description: "Pedi
 console.log(payment.bank_transfer.cvu, payment.checkout_url);
 ```
 
-Versión 1.2.0. Requiere Node.js 22 o más nuevo. Los cambios de cada versión están en [CHANGELOG.md](CHANGELOG.md).
+Versión 1.3.0. Requiere Node.js 22 o más nuevo. Los cambios de cada versión están en [CHANGELOG.md](CHANGELOG.md).
 
 ## Contenido
 
@@ -25,6 +25,7 @@ Versión 1.2.0. Requiere Node.js 22 o más nuevo. Los cambios de cada versión e
 - [Reintentos y timeouts](#reintentos-y-timeouts)
 - [Paginación](#paginación)
 - [Identidad](#identidad)
+- [Raya PSP](#raya-psp)
 - [Raya Connect](#raya-connect)
 - [Errores](#errores)
 - [Webhooks](#webhooks)
@@ -44,6 +45,7 @@ Versión 1.2.0. Requiere Node.js 22 o más nuevo. Los cambios de cada versión e
 5. **Para cobrar a nombre de otras cuentas:** una aplicación en [Developers › Apps](https://raya.cash/dashboard/developers/apps), con su `client_id`, su `client_secret` y tus URLs de redirección. Ver [Raya Connect](#raya-connect).
 6. **Para enviar [payouts](#payouts):** el descriptor del comercio configurado en [Configuración › Negocio](https://raya.cash/dashboard/settings/business). Sin eso, crear un payout da `PAYOUT_ORIGIN_UNAVAILABLE`.
 7. **Para verificar identidades con [Identidad](#identidad):** Identidad activada en tu cuenta (la pedís desde [Identidad](https://raya.cash/dashboard/identity), en el dashboard: nos contás para qué la vas a usar y revisamos tu solicitud; hasta que la aprobemos, crear una verificación da `IDENTITY_NOT_ACTIVATED`) y, para el resultado, un destino de webhooks suscripto a los eventos de «Identidad». Identidad todavía no está disponible en el [sandbox](#sandbox): con una clave de prueba (`raya_sk_test_…`) responde 403 `SANDBOX_NOT_SUPPORTED`.
+8. **Para darles un CVU a tus clientes con [Raya PSP](#raya-psp):** una cuenta de empresa con Raya PSP activado (lo pedís desde [Raya PSP](https://raya.cash/dashboard/psp/customers), en el dashboard, y revisamos tu solicitud; hasta que lo aprobemos, da `PSP_NOT_ACTIVATED`) y, para enterarte de lo que pasa con tus clientes, un destino de webhooks suscripto a los eventos de «Raya PSP». Raya PSP todavía no está disponible en el [sandbox](#sandbox).
 
 ## Instalación
 
@@ -112,7 +114,7 @@ for await (const deposit of page.autoPagingIter()) {
 
 Cada método devuelve una promesa. Los parámetros van con los nombres de la API (`external_reference`, `created_gte`) y las opciones de la llamada, como la `idempotencyKey`, en el último argumento.
 
-Cada respuesta es un objeto del SDK (`Balance`, `Transfer`, `Payment`, `ConnectOrder`, `ConnectPayout`, `User`, `OAuthToken`, `IdentityVerification`, `IdentityVerificationFiles`, `Event` o `ListObject`) cuyos campos son exactamente el JSON de la API: `JSON.stringify(payment)` y `{ ...payment }` dan ese JSON. Los valores vienen tal como los manda la API: montos `number` y fechas en string ISO 8601 (`"2026-10-24T14:00:00Z"`). Si la API suma un campo nuevo, lo ves igual (`payment.campo_nuevo`).
+Cada respuesta es un objeto del SDK (`Balance`, `Transfer`, `Payment`, `ConnectOrder`, `ConnectPayout`, `User`, `OAuthToken`, `IdentityVerification`, `IdentityVerificationFiles`, `PspCustomer`, `PspCustomerBalance`, `PspTransfer`, `PspBalance`, `Event` o `ListObject`) cuyos campos son exactamente el JSON de la API: `JSON.stringify(payment)` y `{ ...payment }` dan ese JSON. Los valores vienen tal como los manda la API: montos `number` y fechas en string ISO 8601 (`"2026-10-24T14:00:00Z"`). Si la API suma un campo nuevo, lo ves igual (`payment.campo_nuevo`).
 
 Cada objeto trae `lastResponse`, con el `requestId` (`req_…`) que nos tenés que mandar si escribís a soporte:
 
@@ -140,7 +142,7 @@ const transfer = await Transfer.create(
 const page = await Transfer.list({ direction: "inbound" });
 ```
 
-Los dos estilos usan el mismo núcleo y se comportan igual. `config` se lee en cada request, así que cambiarlo entre llamadas surte efecto enseguida, y está sellado: asignar una opción que no existe (`config.apikey`) falla en vez de no hacer nada. Preferí `RayaClient` si tu proceso usa más de una clave o si querés configurar cada cliente por separado. `payment.refund()` usa el cliente del que vino el pago: si lo trajiste con un `RayaClient`, usa ese cliente; si no, la configuración global. Las apps tienen lo mismo: `OAuth.token(…)`, `User.retrieve(…)`, `ConnectOrder.create/retrieve/refund(…)` y `order.refund()`, con `config.apiKey` igual al access_token de la cuenta conectada. `ConnectPayout.create/retrieve/list(…)` va con tu clave secreta, igual que Identidad: `IdentityVerification.create/retrieve/list/cancel/files(…)` y `verification.cancel()`. En un [sandbox](#sandbox), con su clave secreta de prueba, también `Payment.simulateTransfer(…)`.
+Los dos estilos usan el mismo núcleo y se comportan igual. `config` se lee en cada request, así que cambiarlo entre llamadas surte efecto enseguida, y está sellado: asignar una opción que no existe (`config.apikey`) falla en vez de no hacer nada. Preferí `RayaClient` si tu proceso usa más de una clave o si querés configurar cada cliente por separado. `payment.refund()` usa el cliente del que vino el pago: si lo trajiste con un `RayaClient`, usa ese cliente; si no, la configuración global. Las apps tienen lo mismo: `OAuth.token(…)`, `User.retrieve(…)`, `ConnectOrder.create/retrieve/refund(…)` y `order.refund()`, con `config.apiKey` igual al access_token de la cuenta conectada. `ConnectPayout.create/retrieve/list(…)` va con tu clave secreta, igual que Identidad (`IdentityVerification.create/retrieve/list/cancel/files(…)` y `verification.cancel()`) y Raya PSP (`PspCustomer.create/retrieve/list/retrieveBalance/block/unblock/close/recreate(…)`, `customer.block()` y las otras tres acciones, `PspTransfer.create/retrieve/list(…)` y `PspBalance.retrieve()`). En un [sandbox](#sandbox), con su clave secreta de prueba, también `Payment.simulateTransfer(…)`.
 
 ## ESM, CommonJS y TypeScript
 
@@ -151,12 +153,12 @@ import { RayaClient } from "rayacash"; // ESM
 // const { RayaClient } = require("rayacash"); // CommonJS
 ```
 
-En TypeScript, cada objeto conoce sus campos (`payment.bank_transfer.cvu` es `string`) y los enums son uniones (`payment.status` es `"pending" | "succeeded" | …`). `transfers.create` sin `idempotencyKey` no compila. Para distinguir el objeto de un evento, usá `instanceof`:
+En TypeScript, cada objeto conoce sus campos (`payment.bank_transfer.cvu` es `string`) y los enums son uniones (`payment.status` es `"pending" | "succeeded" | …`). `transfers.create`, `connect.payouts.create` y `psp.transfers.create` sin `idempotencyKey` no compilan. Para distinguir el objeto de un evento, usá `instanceof`:
 
 ```js
 import { ConnectOrder, Payment, Transfer } from "rayacash";
 
-const object = event.data.object; // Transfer | Payment | ConnectOrder | IdentityVerification | RayaObject
+const object = event.data.object; // Transfer | Payment | ConnectOrder | IdentityVerification | PspCustomer | PspTransfer | PspDocumentRequest | RayaObject
 if (object instanceof Payment) {
   console.log(object.external_reference);
 } else if (object instanceof Transfer) {
@@ -183,8 +185,8 @@ console.log((cents / 100).toFixed(2)); // exacto: "48169.59"
 
 Con una `Idempotency-Key` podés reintentar un POST sin miedo a que se haga dos veces: si ya lo procesamos, te devolvemos el mismo resultado.
 
-- **`transfers.create` y `connect.payouts.create` exigen la `idempotencyKey`.** Generá un UUID v4 (`crypto.randomUUID()`) para cada transferencia o payout, **guardalo con la operación en tu base antes de llamar** y reusalo en cada reintento. Así, si tu proceso se corta después de mandar la request, el reintento no transfiere dos veces.
-- En `payments.create`, `payments.refund`, `connect.orders.create`, `connect.orders.refund`, `identity.verifications.create` e `identity.verifications.cancel` es opcional pero recomendada. Si no la pasás, el SDK genera una que protege solo los reintentos de esa llamada. `oauth.token` y `testHelpers.payments.simulateTransfer` (del [sandbox](#sandbox)) son los únicos POST que no la llevan: el `code` se canjea una sola vez y un pago se simula una sola vez.
+- **`transfers.create`, `connect.payouts.create` y `psp.transfers.create` exigen la `idempotencyKey`.** Generá un UUID v4 (`crypto.randomUUID()`) para cada transferencia o payout, **guardalo con la operación en tu base antes de llamar** y reusalo en cada reintento. Así, si tu proceso se corta después de mandar la request, el reintento no transfiere dos veces.
+- En `payments.create`, `payments.refund`, `connect.orders.create`, `connect.orders.refund`, `identity.verifications.create`, `identity.verifications.cancel`, `psp.customers.create` y las acciones de un cliente (`psp.customers.block`, `unblock`, `close` y `recreate`) es opcional pero recomendada. Si no la pasás, el SDK genera una que protege solo los reintentos de esa llamada. `oauth.token` y `testHelpers.payments.simulateTransfer` (del [sandbox](#sandbox)) son los únicos POST que no la llevan: el `code` se canjea una sola vez y un pago se simula una sola vez.
 - El SDK reintenta siempre con la misma clave. La que usó queda en `obj.lastResponse.idempotencyKey` y en `error.idempotencyKey`, para que puedas reintentar más tarde.
 - Guardamos cada clave 24 horas, para toda tu cuenta. Usar la misma clave con otros parámetros da `IdempotencyError` con `code === "IDEMPOTENCY_KEY_REUSED"`.
 - Si una transferencia o un payout terminó `failed`, para intentarlo de nuevo usá una clave **nueva**: con la misma te devolvemos la respuesta original.
@@ -401,6 +403,152 @@ document.querySelector("#verificar").addEventListener("click", async () => {
 
 `client.identity`, `IdentityVerification` e `IdentityVerificationFiles` existen desde la 1.2.0. Hay un ejemplo completo en [`examples/verificar-una-identidad.mjs`](examples/verificar-una-identidad.mjs).
 
+## Raya PSP
+
+Con **Raya PSP** creás cuentas con CVU y alias a nombre de los clientes de tu empresa: cada cliente (`PspCustomer`) recibe transferencias de cualquier banco o billetera en su CVU, y vos ves su saldo y transferís en su nombre, desde tu servidor y con tu clave secreta. Es solo para cuentas de empresa con Raya PSP activado: lo pedís desde [Raya PSP](https://raya.cash/dashboard/psp/customers), en el dashboard de tu cuenta de empresa (nos contás para qué lo vas a usar y revisamos tu solicitud). Hasta que lo aprobemos, crear clientes, cambiar su estado y transferir en su nombre dan `PermissionDeniedError` con `code === "PSP_NOT_ACTIVATED"`; si no lo aprobamos, escribinos a soporte@raya.cash. Raya PSP todavía no está disponible en el [sandbox](#sandbox): con una clave de prueba (`raya_sk_test_…`) responde 403 `SANDBOX_NOT_SUPPORTED`.
+
+El flujo:
+
+1. **Creá el cliente.** Si se verificó con [Identidad](#identidad), alcanza con el `id` de su verificación: su CUIL, su nombre y apellido y su sexo los tomamos de ahí. En general vuelve `201` con `status: "active"`: ya tiene CVU y alias. Sin Identidad mandás sus datos y las fotos de su DNI, y para una persona jurídica, su CUIT y su razón social (ver [abajo](#qué-mandar-para-crear-un-cliente)).
+
+   ```js
+   import { RayaClient } from "rayacash";
+
+   const client = new RayaClient(process.env.RAYA_SECRET_KEY);
+
+   const customer = await client.psp.customers.create(
+     {
+       identity_verification: verification.id, // su verificación de Identidad, ya verified
+       external_reference: "cliente-8812", // tu id del cliente, nunca datos personales
+       metadata: { plan: "pro" },
+     },
+     { idempotencyKey: user.pspCustomerKey }, // un UUID v4 guardado con tu cliente
+   );
+   console.log(customer.status, customer.cvu?.account, customer.cvu?.alias);
+   ```
+
+2. **Esperá el webhook** si no volvió `active`. Con `202` (`status` en `verifying` o `pending`) seguimos en segundo plano y te avisamos con `psp.customer.activated`, `psp.customer.failed` o `psp.customer.rejected` (ver [Webhooks](#webhooks)).
+
+3. **Leé el cliente** cuando lo necesites: su estado, su CVU y su saldo.
+
+   ```js
+   const current = await client.psp.customers.retrieve(customer.id);
+   if (current.status === "active") {
+     console.log(current.cvu?.account, current.balance);
+   } else if (current.status === "rejected" || current.status === "failed") {
+     console.log(current.decline_reason?.code); // decidí con code, no con message
+   }
+   ```
+
+4. **Transferí en su nombre** a un CBU, CVU o alias. La `idempotencyKey` es obligatoria: guardala con la transferencia antes de llamar y reusala en cada reintento.
+
+   ```js
+   import { randomUUID } from "node:crypto";
+
+   const key = randomUUID();
+   await operacion.saveIdempotencyKey(key); // primero guardala
+
+   const transfer = await client.psp.transfers.create(
+     { customer: customer.id, amount: "18350.50", destination: "0000123380736153041182" },
+     { idempotencyKey: key },
+   );
+   console.log(transfer.status, transfer.counterparty.name); // "pending" (otro banco) o "completed" (Raya)
+   ```
+
+5. **Lo que recibe** tu cliente en su CVU te llega como `psp.transfer.received`, con la `PspTransfer` en `event.data.object`. Y cuando una que enviaste en su nombre se acredita o falla, como `psp.transfer.sent` o `psp.transfer.failed`.
+
+6. **Bloquealo** si hace falta: sigue recibiendo transferencias, pero no podés transferir en su nombre. Y **listá** tus clientes y sus transferencias, de los más nuevos a los más viejos:
+
+   ```js
+   await client.psp.customers.block(customer.id); // también unblock, close (da de baja el CVU) y recreate
+
+   const page = await client.psp.customers.list({
+     status: "active", // verifying, pending, active, blocked, closed, failed o rejected
+     created_gte: new Date("2026-11-01T00:00:00-03:00"),
+     limit: 100,
+   });
+   for await (const item of page.autoPagingIter()) {
+     console.log(item.id, item.status, item.balance);
+   }
+
+   const movements = await client.psp.transfers.list({ customer: customer.id, direction: "inbound" });
+   for await (const movement of movements.autoPagingIter()) {
+     console.log(movement.id, movement.amount, movement.counterparty.name);
+   }
+   ```
+
+**Tu saldo es el que manda.** La plata de tus clientes está en tu cuenta: lo que reciben se acredita en tu saldo y cada cliente lleva además el suyo (`balance`), que sube con lo que recibe y baja con lo que transferís en su nombre. Para transferir en nombre de un cliente tienen que alcanzar los dos: primero tu saldo disponible (si no, `UnprocessableEntityError` con `code === "INSUFFICIENT_BALANCE"`) y después el del cliente (`code === "CUSTOMER_INSUFFICIENT_BALANCE"`). El saldo de un cliente nunca queda negativo y no podés usar el de un cliente para transferir en nombre de otro. `client.psp.customers.retrieveBalance(customer.id)` te dice cuánto podés transferir ahora en su nombre (`transferable`), y `client.psp.balance.retrieve()`, tu saldo disponible (`available`) y la suma de los saldos de tus clientes (`customers_balance`). `transferable` no tiene en cuenta el límite mensual del cliente: una transferencia a una cuenta fuera de Raya que lo supera responde `UnprocessableEntityError` con `code === "LIMIT_EXCEEDED"`, sin descontar nada (si subís su límite desde el panel, podés reintentar con la misma `idempotencyKey`).
+
+Cada acreditación en el CVU de un cliente y cada transferencia en su nombre tienen una comisión que se descuenta de tu saldo: es el `fee` de la `PspTransfer`. El saldo del cliente se mueve por el monto entero (`amount`) y entre dos clientes de tu cuenta no hay comisión. Los movimientos de tus clientes no aparecen en `client.transfers.list()` ni emiten `transfer.*`.
+
+### Qué mandar para crear un cliente
+
+`client.psp.customers.create` recibe una de tres formas, según cómo validaste la identidad de tu cliente. Las tres aceptan además `external_reference` y `metadata`.
+
+| Tu cliente | Qué mandás | Qué hacemos |
+|---|---|---|
+| Una persona humana que se verificó con [Identidad](#identidad) | Solo `identity_verification` | Tomamos de la verificación su CUIL (`tax_id`), su nombre y apellido (`name`), su sexo y su nacionalidad, con `person_type: "F"`, y creamos su CVU: en general, `201` con `status: "active"`. |
+| Una persona humana sin Identidad (hiciste tu propio KYC o usaste otro proveedor) | `tax_id`, `name`, `person_type: "F"`, `document_front_url`, `document_back_url` y `selfie_url` | Leemos su DNI, lo validamos contra el Registro Nacional de las Personas (RENAPER) y comparamos la cara: `202` con `status: "verifying"`. |
+| Una persona jurídica | `tax_id`, `name` (su razón social) y `person_type: "J"`, sin fotos | La validamos contra el Registro Nacional de Sociedades y la revisamos: `202` con `status: "verifying"`. |
+
+- **Con [Identidad](#identidad):** verificala antes con `client.identity.verifications.create({ type: "document" })` y mandá solo su `id` en `identity_verification`: una verificación `document` de tu cuenta en estado `verified`, que no hayas usado para otro cliente (si ya la usaste, `ConflictError` con `code === "CUSTOMER_ALREADY_EXISTS"` y ese cliente en `error.data.customer`). No mandes `tax_id`, `name`, `person_type` ni fotos: los tomamos de la verificación, y si vienen, da `InvalidRequestError` con `code === "PARAMETER_INVALID"` y el campo en `error.param`. Una verificación sin un CUIL válido (por ejemplo, con sexo X y sin CUIL en el RENAPER) o de la persona titular de tu cuenta también da `PARAMETER_INVALID`, con `error.param` en `identity_verification`; en el primer caso, creá el cliente con sus datos y las fotos.
+- **Con las fotos:** mandá `tax_id` (su CUIL), `name` (su nombre y apellido), `person_type: "F"` y las URLs `https://` públicas del frente y del dorso del DNI y de una selfie (`document_front_url`, `document_back_url` y `selfie_url`): imágenes derechas, JPEG o PNG de hasta 5 MB. Las bajamos, leemos el DNI (el sexo sale del frente), lo validamos contra el RENAPER y comparamos la cara. Te avisamos con `psp.customer.activated` o `psp.customer.rejected`, con el motivo en `decline_reason.code` (por ejemplo, `document_mismatch` si el DNI no es el de `tax_id` y `name_mismatch` si el nombre no coincide).
+- **Una persona jurídica** no lleva fotos: validamos su CUIT y su razón social contra el Registro Nacional de Sociedades. Si no figura, da `UnprocessableEntityError` con `code === "TAX_ID_NOT_REGISTERED"`, y si la razón social no coincide, `code === "CUSTOMER_DATA_MISMATCH"` con `error.data.field` en `name`.
+
+En TypeScript, `PspCustomerCreateParams` es la unión de las tres formas (`PspCustomerCreateWithVerificationParams`, `PspCustomerCreateWithPhotosParams` y `PspCustomerCreateCompanyParams`): una mezcla, como `identity_verification` con `tax_id`, no compila. Antes de mandar, el SDK solo chequea que `identity_verification` sea un string si viene y, sin ella, que `tax_id` y `name` lo sean (si no, `TypeError`); lo demás lo responde la API. El status HTTP (`201` o `202`) está en `customer.lastResponse.httpStatus`, pero decidí con `customer.status`.
+
+| Método | Endpoint | Devuelve |
+|---|---|---|
+| `client.psp.customers.create(params, options?)` | `POST /v1/psp/customers` | `PspCustomer` |
+| `client.psp.customers.retrieve(customerId, options?)` | `GET /v1/psp/customers/:id` | `PspCustomer` |
+| `client.psp.customers.list(params?, options?)` | `GET /v1/psp/customers` | `ListObject<PspCustomer>` |
+| `client.psp.customers.retrieveBalance(customerId, options?)` | `GET /v1/psp/customers/:id/balance` | `PspCustomerBalance` |
+| `client.psp.customers.block(customerId, options?)` | `POST /v1/psp/customers/:id/block` | `PspCustomer` |
+| `client.psp.customers.unblock(customerId, options?)` | `POST /v1/psp/customers/:id/unblock` | `PspCustomer` |
+| `client.psp.customers.close(customerId, options?)` | `POST /v1/psp/customers/:id/close` | `PspCustomer` |
+| `client.psp.customers.recreate(customerId, options?)` | `POST /v1/psp/customers/:id/recreate` | `PspCustomer` |
+| `client.psp.transfers.create(params, { idempotencyKey })` | `POST /v1/psp/transfers` | `PspTransfer` |
+| `client.psp.transfers.retrieve(transferId, options?)` | `GET /v1/psp/transfers/:id` | `PspTransfer` |
+| `client.psp.transfers.list(params?, options?)` | `GET /v1/psp/transfers` | `ListObject<PspTransfer>` |
+| `client.psp.balance.retrieve(options?)` | `GET /v1/psp/balance` | `PspBalance` |
+
+En el estilo global son `PspCustomer.create`, `retrieve`, `list`, `retrieveBalance`, `block`, `unblock`, `close` y `recreate`, `PspTransfer.create`, `retrieve` y `list`, y `PspBalance.retrieve`, más `customer.block()`, `customer.unblock()`, `customer.close()` y `customer.recreate()` en la instancia, que usan el cliente del que vino.
+
+| Estado | Qué quiere decir |
+|---|---|
+| `verifying` | Validamos su identidad o lo estamos revisando. |
+| `pending` | Estamos creando su CVU o asignándole el alias (`cvu.alias` puede venir en `null`). |
+| `active` | Su CVU y su alias están activos: recibe transferencias y podés transferir en su nombre. |
+| `blocked` | Bloqueado: sigue recibiendo, pero no podés transferir en su nombre. `blocked_by` es `account` si lo bloqueaste vos y `raya` si lo bloqueamos nosotros. |
+| `closed` | Su CVU está dado de baja: conserva su saldo y su historial, y lo podés recrear. |
+| `failed` | No pudimos crear su CVU: lo podés recrear. |
+| `rejected` | No pudimos validarlo o aprobarlo (mirá `decline_reason.code`). Es final: con el mismo CUIL o CUIT podés crear un cliente nuevo. |
+
+| Evento | Cuándo |
+|---|---|
+| `psp.customer.activated` | El cliente ya tiene su CVU activo y puede recibir transferencias. |
+| `psp.customer.updated` | Le asignamos el alias al CVU del cliente después de activarlo. |
+| `psp.customer.failed` | No pudimos crear el CVU del cliente. Podés volver a intentarlo con recrear. |
+| `psp.customer.rejected` | No pudimos validar o aprobar al cliente. |
+| `psp.customer.blocked` | El cliente quedó bloqueado o cambió quién lo bloqueó: sigue recibiendo transferencias, pero no puede enviar. |
+| `psp.customer.unblocked` | Se levantaron los bloqueos del cliente. |
+| `psp.customer.closed` | Se dio de baja el CVU del cliente: su saldo y su historial se conservan. |
+| `psp.transfer.received` | Entró una transferencia al CVU de un cliente. |
+| `psp.transfer.sent` | Se completó una transferencia que enviaste en nombre de un cliente. |
+| `psp.transfer.failed` | Una transferencia que enviaste en nombre de un cliente no se pudo completar o el banco la revirtió. |
+| `psp.document_request.created` | Raya te pidió documentación sobre un cliente: subila desde Negocios › Raya PSP. |
+| `psp.document_request.closed` | Raya cerró un pedido de documentación sobre un cliente. |
+
+- **Las acciones** van sin body. `block` se puede desde `pending`, `active`, `closed` o `failed`, aunque tu cuenta todavía no tenga Raya PSP aprobado; un bloqueo de Raya solo lo levantamos nosotros (`unblock` da `ConflictError` con `code === "CUSTOMER_STATUS_CONFLICT"` y `error.data.blocked_by` en `raya`, sin el motivo). `close` da de baja el CVU de un cliente `active` (o bloqueado por vos, y el bloqueo se levanta): su saldo sigue en tu cuenta. `recreate` le da un CVU nuevo a un cliente `closed` o `failed` sin bloqueos, con el mismo `id`, saldo e historial: vuelve `200` (`active` o `failed`) o `202` (`pending`).
+- Repetir una acción que ya está hecha (bloquear uno bloqueado por vos, dar de baja uno `closed`) devuelve el cliente igual. En un estado que no la permite, `ConflictError` con `code === "CUSTOMER_STATUS_CONFLICT"`, el estado en `error.data.status` y quién lo bloqueó en `error.data.blocked_by`. Transferir en nombre de un cliente que no está `active` da el mismo error.
+- La `idempotencyKey` es opcional en `customers.create` y en las cuatro acciones (si no la pasás, el SDK genera una por llamada) y obligatoria en `transfers.create` (ver [Idempotencia](#idempotencia)).
+- Un cliente con un CUIL o CUIT que ya tenés, o con una verificación de Identidad que ya usaste para otro, da `ConflictError` con `code === "CUSTOMER_ALREADY_EXISTS"` y el `id` de ese cliente en `error.data.customer`. Un id que no existe o no es de tu cuenta da `NotFoundError` con `code === "CUSTOMER_NOT_FOUND"` (en `transfers.create`, con `error.param` en `customer`) o `TRANSFER_NOT_FOUND`.
+- Los `psp.*` los elegís en Developers › Webhooks, en el grupo «Raya PSP», que aparece cuando tu cuenta tiene Raya PSP aprobado. Un cliente bloqueado sigue recibiendo, y `psp.transfer.received` puede llegar antes que `psp.customer.activated`.
+- **Pedidos de documentación.** A veces nuestro equipo de cumplimiento necesita documentación sobre un cliente: te avisamos con `psp.document_request.created` (con un `PspDocumentRequest` en `event.data.object`) y un email, y la subís desde [Raya PSP](https://raya.cash/dashboard/psp/customers), en el detalle del cliente. Cuando cerramos el pedido, te avisamos con `psp.document_request.closed`.
+- **El CUIL, el nombre y las fotos del DNI son datos personales** de tus clientes (también el `tax_id` y el `name` que te devolvemos): mandalos solo con su consentimiento y no los escribas en logs. Si mandás fotos, que sus URLs venzan pronto. Tampoco pongas datos personales en `external_reference` (y la lista de clientes no filtra por `tax_id`: iría en la URL).
+
+`client.psp`, `PspCustomer`, `PspCustomerBalance`, `PspTransfer`, `PspBalance` y `PspDocumentRequest` existen desde la 1.3.0. Hay un ejemplo completo en [`examples/operar-clientes-psp.mjs`](examples/operar-clientes-psp.mjs) y la guía entera, con los saldos y las comisiones, en la [referencia de la API › Raya PSP](https://raya.cash/api/psp).
+
 ## Raya Connect
 
 Con **Raya Connect** cobrás con una **app** a nombre de otras cuentas de Raya (las **cuentas conectadas**) y te quedás con una comisión fija por cobro. Es el modelo de las plataformas y los marketplaces: creás la app en [Developers › Apps](https://raya.cash/dashboard/developers/apps), cada comercio la conecta una vez y desde ahí creás **pagos** a su nombre. Al acreditarse, lo cobrado menos tu comisión se liquida al comercio y la comisión, a tu cuenta, cada uno con su plazo de liquidación (que se puede adelantar). Para enviarles dinero a tus vendedores desde tu saldo, con tu clave secreta y sin pasar por una app, están los [payouts](#payouts).
@@ -554,12 +702,12 @@ Todos los errores extienden `RayaError` (que extiende `Error`). **Decidí con `e
 | Clase | HTTP | Códigos | Qué hacer |
 |---|---|---|---|
 | `InvalidRequestError` | 400, 405, 413 y los demás `4xx` | `PARAMETER_MISSING`, `PARAMETER_INVALID`, `PARAMETER_UNKNOWN`, `INVALID_JSON`, `OAUTH_GRANT_INVALID`, `OAUTH_GRANT_TYPE_UNSUPPORTED`… | Corregí la request: `error.param` dice qué parámetro falló. |
-| `NotFoundError` (subclase de la anterior) | 404 | `PAYMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `ORDER_NOT_FOUND`, `USER_NOT_FOUND`, `NOT_FOUND`, `PAYOUT_NOT_FOUND`, `VERIFICATION_NOT_FOUND` | No existe o no es de tu cuenta (ni de la cuenta conectada). |
+| `NotFoundError` (subclase de la anterior) | 404 | `PAYMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `ORDER_NOT_FOUND`, `USER_NOT_FOUND`, `NOT_FOUND`, `PAYOUT_NOT_FOUND`, `VERIFICATION_NOT_FOUND`, `CUSTOMER_NOT_FOUND` | No existe o no es de tu cuenta (ni de la cuenta conectada). |
 | `AuthenticationError` | 401 | `API_KEY_MISSING`, `API_KEY_INVALID`, `API_KEY_EXPIRED`, `ACCESS_TOKEN_MISSING`, `ACCESS_TOKEN_INVALID`, `ACCESS_TOKEN_REVOKED`, `OAUTH_CLIENT_INVALID`… | Revisá la clave secreta o el access_token. `ACCESS_TOKEN_REVOKED`: la cuenta desconectó tu app. |
-| `PermissionDeniedError` | 403 | `API_KEY_ACCOUNT_LOCKED`, `API_NOT_ENABLED`, `MERCHANT_NOT_CONFIGURED`, `TRANSFERS_BLOCKED`, `CONNECTED_ACCOUNT_LOCKED`, `CONNECTED_ACCOUNT_NOT_CONFIGURED`, `APP_DISABLED`, `PAYOUT_ORIGIN_UNAVAILABLE`, `SANDBOX_NOT_SUPPORTED`, `SANDBOX_ONLY`, `IDENTITY_NOT_ACTIVATED` | La cuenta (o la cuenta conectada) no puede hacer esto todavía. `SANDBOX_NOT_SUPPORTED`: ese endpoint todavía no está disponible en el sandbox (usaste una credencial de prueba). `SANDBOX_ONLY`: `testHelpers` solo funciona en un sandbox, con su clave secreta de prueba. `IDENTITY_NOT_ACTIVATED`: activá Identidad desde el dashboard antes de crear verificaciones. Si no la aprobamos, escribinos a soporte@raya.cash. |
+| `PermissionDeniedError` | 403 | `API_KEY_ACCOUNT_LOCKED`, `API_NOT_ENABLED`, `MERCHANT_NOT_CONFIGURED`, `TRANSFERS_BLOCKED`, `CONNECTED_ACCOUNT_LOCKED`, `CONNECTED_ACCOUNT_NOT_CONFIGURED`, `APP_DISABLED`, `PAYOUT_ORIGIN_UNAVAILABLE`, `SANDBOX_NOT_SUPPORTED`, `SANDBOX_ONLY`, `IDENTITY_NOT_ACTIVATED`, `PSP_NOT_ACTIVATED` | La cuenta (o la cuenta conectada) no puede hacer esto todavía. `SANDBOX_NOT_SUPPORTED`: ese endpoint todavía no está disponible en el sandbox (usaste una credencial de prueba). `SANDBOX_ONLY`: `testHelpers` solo funciona en un sandbox, con su clave secreta de prueba. `IDENTITY_NOT_ACTIVATED`: activá Identidad desde el dashboard antes de crear verificaciones. Si no la aprobamos, escribinos a soporte@raya.cash. `PSP_NOT_ACTIVATED`: tu cuenta todavía no tiene Raya PSP aprobado. |
 | `IdempotencyError` | 409 | `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_KEY_IN_USE` | Una clave por operación; si está en uso, reintentá más tarde con la misma. |
-| `ConflictError` | 409 | `PAYMENT_NOT_REFUNDABLE`, `PAYMENT_NOT_PENDING`, `VERIFICATION_NOT_CANCELABLE` | Mirá `error.data.status` (y, en un reembolso, `error.data.reason`). `PAYMENT_NOT_PENDING`: ese pago de prueba ya no está pendiente, así que no se puede simular. |
-| `UnprocessableEntityError` | 422 | `INSUFFICIENT_BALANCE`, `LIMIT_EXCEEDED`, `DESTINATION_NOT_FOUND`, `DESTINATION_INACTIVE`, `DESTINATION_NOT_SUPPORTED`, `REFUND_FAILED` | No se arregla reintentando: mostráselo a la persona. |
+| `ConflictError` | 409 | `PAYMENT_NOT_REFUNDABLE`, `PAYMENT_NOT_PENDING`, `VERIFICATION_NOT_CANCELABLE`, `CUSTOMER_ALREADY_EXISTS`, `CUSTOMER_STATUS_CONFLICT` | Mirá `error.data.status` (y, en un reembolso, `error.data.reason`). `PAYMENT_NOT_PENDING`: ese pago de prueba ya no está pendiente, así que no se puede simular. `CUSTOMER_ALREADY_EXISTS`: ya tenés ese cliente, o ya usaste esa verificación de Identidad para otro (`error.data.customer`). `CUSTOMER_STATUS_CONFLICT`: el estado del cliente no lo permite (y `error.data.blocked_by`, quién lo bloqueó). |
+| `UnprocessableEntityError` | 422 | `INSUFFICIENT_BALANCE`, `LIMIT_EXCEEDED`, `DESTINATION_NOT_FOUND`, `DESTINATION_INACTIVE`, `DESTINATION_NOT_SUPPORTED`, `REFUND_FAILED`, `CUSTOMER_INSUFFICIENT_BALANCE`, `CUSTOMER_DATA_MISMATCH`, `TAX_ID_NOT_REGISTERED` | No se arregla reintentando: mostráselo a la persona. `CUSTOMER_DATA_MISMATCH`: la razón social de una persona jurídica (`error.data.field` en `name`) no coincide con la del Registro Nacional de Sociedades. |
 | `RateLimitError` | 429 | `RATE_LIMITED` | Esperá `error.retryAfter` segundos. Si es el tope de verificaciones de Identidad, `error.data.limit` es `open` o `daily`. |
 | `APIError` | 5xx y 408 | `INTERNAL_ERROR`, `BANK_UNAVAILABLE`, `CVU_UNAVAILABLE`, `API_UNAVAILABLE`, `TEMPORARILY_UNAVAILABLE` | Reintentá más tarde, en los POST con la misma `idempotencyKey`. |
 | `APIConnectionError` | — | `NETWORK_ERROR`, `TIMEOUT` | No llegó respuesta: reintentá con la misma `idempotencyKey`. |
@@ -591,7 +739,7 @@ Un reembolso que la red todavía no confirmó sale como `APIError` con `code ===
 
 ## Webhooks
 
-Te avisamos en tu servidor apenas pasa algo: `payment.succeeded` cuando llega la transferencia de un pago, `transfer.received` cuando te depositan, `connect.order.succeeded` cuando se acredita un pago de tu app, `identity.verification.verified` cuando verificamos a una persona, etc. **Antes de procesar un evento, verificá la firma**:
+Te avisamos en tu servidor apenas pasa algo: `payment.succeeded` cuando llega la transferencia de un pago, `transfer.received` cuando te depositan, `connect.order.succeeded` cuando se acredita un pago de tu app, `identity.verification.verified` cuando verificamos a una persona, `psp.transfer.received` cuando le transfieren a un cliente de Raya PSP, etc. **Antes de procesar un evento, verificá la firma**:
 
 ```js
 import express from "express";
@@ -627,10 +775,11 @@ app.post("/webhooks/raya", express.raw({ type: "application/json" }), (req, res)
 - Respondé `2xx` en menos de 15 segundos. Si tenés que hacer algo lento, guardá el evento, respondé y procesalo después.
 - El mismo evento puede llegar más de una vez y desordenado: guardá los `event.id` que procesaste y, si necesitás el estado actual, consultá el objeto con la API.
 - `event.data.object` es el `Transfer`, el `Payment`, el `ConnectOrder` o la `IdentityVerification` tal como estaba cuando ocurrió el evento. Los `connect.order.*` le llegan al dueño de la app; el comercio conectado recibe los `payment.*` del mismo cobro. Los `identity.verification.*` traen la verificación siempre con `person` en `null`: pedí los datos con `client.identity.verifications.retrieve(id)`.
+- Los de [Raya PSP](#raya-psp) traen el `PspCustomer`, la `PspTransfer` o el `PspDocumentRequest`: `psp.customer.activated`, `psp.customer.updated`, `psp.customer.failed`, `psp.customer.rejected`, `psp.customer.blocked`, `psp.customer.unblocked`, `psp.customer.closed`, `psp.transfer.received`, `psp.transfer.sent`, `psp.transfer.failed`, `psp.document_request.created` y `psp.document_request.closed`. Los elegís en el grupo «Raya PSP» de Developers › Webhooks, que aparece cuando tu cuenta tiene Raya PSP aprobado.
 - «Enviar evento de prueba» (en Developers › Webhooks) manda un `webhook.test`: respondé `2xx` e ignoralo.
 - `event.livemode` es `true` en tu cuenta real y `false` en un [sandbox](#sandbox). Un evento emitido antes de que existiera el campo no lo trae si se reenvía (es `undefined`): tratalo como `true`.
 - La firma tolera 5 minutos de diferencia con tu reloj (`tolerance = 300`, en segundos). Mientras rotás el secreto llegan dos firmas: alcanza con que coincida una.
-- Con `client.constructEvent(…)` el evento queda ligado a ese cliente: `event.data.object.refund()` (o `.cancel()`, en una verificación) usa su clave.
+- Con `client.constructEvent(…)` el evento queda ligado a ese cliente: `event.data.object.refund()` (o `.cancel()`, en una verificación, o `.block()`, en un cliente de Raya PSP) usa su clave.
 
 ## Sandbox
 
@@ -675,7 +824,7 @@ En el estilo global es `Payment.simulateTransfer(paymentId, params?)`, con `conf
 - **Saldo y reembolsos.** `balance.retrieve()` devuelve el saldo de prueba, que sube al simular, por lo recibido y sin plazo de liquidación. `payments.refund` devuelve un pago de prueba al instante, hasta 30 días después de pagado, y lo descuenta del saldo de prueba.
 - **Webhooks.** Los destinos que creás adentro del sandbox (hasta 3) reciben sus `payment.*` y `connect.order.*` con `event.livemode` en `false` (en tu cuenta real, `true`), con hasta 3 intentos automáticos por entrega. La firma y el resto son iguales: tu endpoint se prueba con eventos de verdad. Creá el destino antes de simular: cada destino recibe solo los eventos que ocurren después de crearlo, así que los de un pago que simulaste antes no le llegan ni se pueden reenviar. Para probar en tu máquina sin publicar una URL, usá rayacash-cli (necesita Node.js 22 o más nuevo): copiá a `RAYA_WEBHOOK_SECRET` el secreto de tu máquina que muestra `npx rayacash-cli listen --print-secret` y abrí la escucha con `npx rayacash-cli listen --forward-to localhost:3000/webhooks/raya` (toma la clave secreta de prueba de la variable `RAYA_SECRET_KEY` de esa terminal, no de tu `.env`, o de `npx rayacash-cli login`): le reenvía a tu servidor los eventos del sandbox que ocurren con la escucha abierta, firmados con ese secreto.
 - **Raya Connect con usuarios de prueba.** Adentro del sandbox creás tu app en Developers › Apps (su `client_secret` es `raya_cs_test_…`) y hasta 20 usuarios de prueba en «Usuarios de prueba», cada uno con su email, su contraseña y su comercio de prueba. Tu link de autorización les pide ese email y esa contraseña; `oauth.token`, con el `client_secret` de prueba, devuelve un access_token de prueba (`raya_at_test_…`), y con él `users.retrieve` y `connect.orders.*` andan igual que en tu cuenta real. Para simular una orden, pasale su `id` a `testHelpers.payments.simulateTransfer` con la clave secreta de prueba del sandbox (no con el access_token): devuelve el `ConnectOrder`, ligado al cliente de esa clave. Para consultarlo o reembolsarlo, usá el cliente del access_token (`connected.connect.orders.retrieve` o `connected.connect.orders.refund`): su `refund()` iría con la clave secreta y daría `AuthenticationError` con `code === "ACCESS_TOKEN_INVALID"`. Al acreditarse, el usuario de prueba recibe lo cobrado menos `fee` y tu saldo de prueba, `fee`.
-- **Todavía no está disponible en el sandbox:** las transferencias (`transfers.*`), los payouts (`connect.payouts.*`) e Identidad (`identity.verifications.*`) responden `PermissionDeniedError` con `code === "SANDBOX_NOT_SUPPORTED"`, y Raya.js todavía no acepta la clave pública de prueba.
+- **Todavía no está disponible en el sandbox:** las transferencias (`transfers.*`), los payouts (`connect.payouts.*`), Identidad (`identity.verifications.*`) y Raya PSP (`psp.*`) responden `PermissionDeniedError` con `code === "SANDBOX_NOT_SUPPORTED"`, y Raya.js todavía no acepta la clave pública de prueba.
 - **Para pasar a producción,** usá tu clave secreta real (`raya_sk_live_…`) y sacá `testHelpers` de tu código: con la clave real da `SANDBOX_ONLY`. Nada del sandbox pasa a tu cuenta real: configurá tu negocio, creá tu clave secreta y volvé a crear tus destinos de webhook y tus apps (en `RAYA_WEBHOOK_SECRET`, el secreto del destino de tu cuenta real). En tu cuenta real, cada pago tiene su CVU y su alias exclusivos, lo cobrado se suma a tu saldo cuando se liquida y un reembolso puede fallar si no te alcanza el saldo (`INSUFFICIENT_BALANCE`).
 
 ## Tests de tu integración
@@ -725,7 +874,7 @@ const dispatcher = new ProxyAgent("http://proxy.interno:3128");
 const client = new RayaClient({ fetch: (url, init) => fetch(url, { ...init, dispatcher }) });
 ```
 
-- **`appInfo`:** identifica tu plugin en el `User-Agent` (`rayacash-node/1.2.0 … mi-plugin/1.2.0`), que ves en [Developers › Logs](https://raya.cash/dashboard/developers/logs). En el estilo global: `setAppInfo("mi-plugin", { version: "1.2.0" })`.
+- **`appInfo`:** identifica tu plugin en el `User-Agent` (`rayacash-node/1.3.0 … mi-plugin/1.2.0`), que ves en [Developers › Logs](https://raya.cash/dashboard/developers/logs). En el estilo global: `setAppInfo("mi-plugin", { version: "1.2.0" })`.
 - **Logging:** con `RAYA_LOG=info` (o `config.log = "info"`) ves en stderr cada request, su status, su `request_id` y los reintentos; con `debug`, también la query y la idempotency key. Nunca logueamos la clave ni los bodies.
 - **Endpoints nuevos:** si la API suma un endpoint antes que el SDK, usá `client.rawRequest("get", "/v1/…", { params, body })`: tiene la misma autenticación, reintentos y errores. La query va en `params`, nunca en la ruta.
 - **Estilo global:** `config.apiBase`, `config.timeout`, `config.maxNetworkRetries`, `config.fetch`, `config.log` y `setAppInfo()`.
@@ -738,6 +887,7 @@ const client = new RayaClient({ fetch: (url, init) => fetch(url, { ...init, disp
 - Las requests que hacés con la clave secreta quedan 30 días en [Developers › Logs](https://raya.cash/dashboard/developers/logs).
 - El access_token de una cuenta conectada (`raya_at_live_…`) y el `client_secret` de tu app (`raya_cs_live_…`) son secretos como la clave: solo en tu servidor, el token junto al `user_id`. `console.log(token)` lo enmascara; `JSON.stringify(token)` lo da entero, para guardarlo. Las credenciales de prueba de un [sandbox](#sandbox) (`raya_sk_test_…`, `raya_at_test_…` y `raya_cs_test_…`) también son secretas, y `console.log` enmascara la clave y el access_token de prueba con su prefijo, como los reales.
 - `person` y las imágenes de una verificación de Identidad son datos personales: no los escribas en logs (`console.log(verification)` los muestra) y guardá solo lo que necesitás. Los eventos nunca traen `person`.
+- El CUIL, el nombre y las fotos del DNI de tus clientes de Raya PSP también son datos personales: mandalos solo con su consentimiento, no los escribas en logs y, si mandás fotos, que sus URLs venzan pronto.
 
 ## Versionado y compatibilidad
 

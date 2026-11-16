@@ -13,7 +13,9 @@ const KEY = "raya_sk_live_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL";
 
 // Lo que exporta el paquete en runtime: lo de la 1.1.0 (Checkout es el alias deprecado de
 // ConnectOrder, hasta la 2.0.0) más ConnectOrder, ConnectPayout, IdentityVerification e
-// IdentityVerificationFiles. Sacar un nombre rompe el código de alguien.
+// IdentityVerificationFiles (1.2.0) y las clases de Raya PSP: PspBalance, PspCustomer,
+// PspCustomerBalance, PspDocumentRequest y PspTransfer (1.3.0). Sacar un nombre rompe el código de
+// alguien.
 const NAMES = [
   "APIConnectionError",
   "APIError",
@@ -35,6 +37,11 @@ const NAMES = [
   "OAuthToken",
   "Payment",
   "PermissionDeniedError",
+  "PspBalance",
+  "PspCustomer",
+  "PspCustomerBalance",
+  "PspDocumentRequest",
+  "PspTransfer",
   "RateLimitError",
   "RayaClient",
   "RayaError",
@@ -83,6 +90,20 @@ async function identityFetch(url, init) {
   });
 }
 
+// Raya PSP: client.psp llega a dist y su respuesta se hidrata como PspCustomer (el object con el
+// punto, como los de Identidad).
+/** @param {string} url @param {RequestInit} init */
+async function pspFetch(url, init) {
+  assert.equal(url, "https://api.raya.cash/v1/psp/customers/pspc_check/block");
+  assert.equal(init.method, "POST");
+  assert.equal(init.body, undefined);
+  const customer = { id: "pspc_check", object: "psp.customer", status: "blocked" };
+  return new Response(JSON.stringify(customer), {
+    status: 200,
+    headers: { "Raya-Request-Id": "req_check_psp" },
+  });
+}
+
 // Por el nombre del paquete (self-reference), como lo cargaría quien lo instala.
 const esm = await import("rayacash");
 const cjs = require("rayacash");
@@ -105,6 +126,10 @@ for (const [format, sdk] of Object.entries({ esm, cjs: /** @type {typeof esm} */
   const verification = await identity.verifications.retrieve("idv_check");
   assert.ok(verification instanceof sdk.IdentityVerification, `${format}: IdentityVerification`);
   assert.equal(verification.lastResponse?.requestId, "req_check_identity");
+  const psp = new sdk.RayaClient(KEY, { fetch: pspFetch }).psp;
+  const customer = await psp.customers.block("pspc_check");
+  assert.ok(customer instanceof sdk.PspCustomer, `${format}: PspCustomer`);
+  assert.equal(customer.lastResponse?.requestId, "req_check_psp");
   // Los alias de la 1.1.0 son los mismos objetos que los de Raya Connect; client.checkout avisa
   // una vez (cada formato es una copia, con sus propios avisos).
   assert.equal(sdk.Checkout, sdk.ConnectOrder, `${format}: Checkout`);

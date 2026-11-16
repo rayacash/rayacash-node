@@ -21,11 +21,15 @@ import { isolate } from "./helpers.ts";
 
 isolate();
 
-// Los 51 códigos del contrato (api.md › Códigos de error), con los 3 del sandbox:
-// SANDBOX_NOT_SUPPORTED (una credencial de prueba en un endpoint que todavía no está disponible en
-// el sandbox, como Identidad), SANDBOX_ONLY (una credencial real en /v1/test/*) y
-// PAYMENT_NOT_PENDING (simular la transferencia de un pago que ya no está pendiente), e
-// IDENTITY_NOT_ACTIVATED (crear una verificación sin Identidad activada), al final de los 403.
+// Los 58 códigos del contrato (api.md › Códigos de error, los mismos que fija
+// publicapi/tests_catalog.py de la API), con los 3 del sandbox: SANDBOX_NOT_SUPPORTED (una
+// credencial de prueba en un endpoint que todavía no está disponible en el sandbox, como Identidad
+// o Raya PSP), SANDBOX_ONLY (una credencial real en /v1/test/*) y PAYMENT_NOT_PENDING (simular la
+// transferencia de un pago que ya no está pendiente), e IDENTITY_NOT_ACTIVATED (crear una
+// verificación sin Identidad activada), al final de los 403. Los 7 de Raya PSP van al final de su
+// bloque de HTTP, como en la API: PSP_NOT_ACTIVATED (403), CUSTOMER_NOT_FOUND (404),
+// CUSTOMER_ALREADY_EXISTS y CUSTOMER_STATUS_CONFLICT (409), y CUSTOMER_INSUFFICIENT_BALANCE,
+// CUSTOMER_DATA_MISMATCH y TAX_ID_NOT_REGISTERED (422).
 const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["INVALID_JSON", 400, InvalidRequestError],
   ["PARAMETER_MISSING", 400, InvalidRequestError],
@@ -52,6 +56,7 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["SANDBOX_NOT_SUPPORTED", 403, PermissionDeniedError],
   ["SANDBOX_ONLY", 403, PermissionDeniedError],
   ["IDENTITY_NOT_ACTIVATED", 403, PermissionDeniedError],
+  ["PSP_NOT_ACTIVATED", 403, PermissionDeniedError],
   ["TRANSFER_NOT_FOUND", 404, NotFoundError],
   ["PAYMENT_NOT_FOUND", 404, NotFoundError],
   ["NOT_FOUND", 404, NotFoundError],
@@ -59,12 +64,15 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["ORDER_NOT_FOUND", 404, NotFoundError],
   ["PAYOUT_NOT_FOUND", 404, NotFoundError],
   ["VERIFICATION_NOT_FOUND", 404, NotFoundError],
+  ["CUSTOMER_NOT_FOUND", 404, NotFoundError],
   ["METHOD_NOT_ALLOWED", 405, InvalidRequestError],
   ["IDEMPOTENCY_KEY_REUSED", 409, IdempotencyError],
   ["IDEMPOTENCY_KEY_IN_USE", 409, IdempotencyError],
   ["PAYMENT_NOT_REFUNDABLE", 409, ConflictError],
   ["PAYMENT_NOT_PENDING", 409, ConflictError],
   ["VERIFICATION_NOT_CANCELABLE", 409, ConflictError],
+  ["CUSTOMER_ALREADY_EXISTS", 409, ConflictError],
+  ["CUSTOMER_STATUS_CONFLICT", 409, ConflictError],
   ["REQUEST_TOO_LARGE", 413, InvalidRequestError],
   ["INSUFFICIENT_BALANCE", 422, UnprocessableEntityError],
   ["LIMIT_EXCEEDED", 422, UnprocessableEntityError],
@@ -72,6 +80,9 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["DESTINATION_INACTIVE", 422, UnprocessableEntityError],
   ["DESTINATION_NOT_SUPPORTED", 422, UnprocessableEntityError],
   ["REFUND_FAILED", 422, UnprocessableEntityError],
+  ["CUSTOMER_INSUFFICIENT_BALANCE", 422, UnprocessableEntityError],
+  ["CUSTOMER_DATA_MISMATCH", 422, UnprocessableEntityError],
+  ["TAX_ID_NOT_REGISTERED", 422, UnprocessableEntityError],
   ["RATE_LIMITED", 429, RateLimitError],
   ["INTERNAL_ERROR", 500, APIError],
   ["BANK_UNAVAILABLE", 503, APIError],
@@ -94,10 +105,88 @@ function makeError(
   });
 }
 
-test("el catálogo tiene los 51 códigos", () => {
-  assert.equal(CATALOG.length, 51);
-  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 51);
+test("el catálogo tiene los 58 códigos", () => {
+  assert.equal(CATALOG.length, 58);
+  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 58);
 });
+
+// Los 7 de Raya PSP con el mensaje textual de publicapi/errors.py de la API y la data que manda
+// cada uno (DESIGN §5.8): la clase sale del status y `param`, de data.field.
+const PSP_ERRORS: Array<
+  [string, number, typeof RayaError, string, Record<string, unknown> | null]
+> = [
+  [
+    "PSP_NOT_ACTIVATED",
+    403,
+    PermissionDeniedError,
+    "Raya PSP todavía no está activado para tu cuenta. Activalo o mirá el estado de tu solicitud " +
+      "en Negocios › Raya PSP.",
+    null,
+  ],
+  ["CUSTOMER_NOT_FOUND", 404, NotFoundError, "No encontramos ese cliente.", { field: "customer" }],
+  [
+    "CUSTOMER_ALREADY_EXISTS",
+    409,
+    ConflictError,
+    "Ya tenés un cliente con ese CUIL o CUIT.",
+    { customer: "pspc_7Hq2Lm9Xw4Tz1Bv8Nc3Kd6Rf" },
+  ],
+  [
+    "CUSTOMER_STATUS_CONFLICT",
+    409,
+    ConflictError,
+    "El cliente no está en un estado que permita esta operación. Revisá su status.",
+    { status: "blocked", blocked_by: "raya" },
+  ],
+  [
+    "CUSTOMER_INSUFFICIENT_BALANCE",
+    422,
+    UnprocessableEntityError,
+    "Tu cliente no tiene saldo suficiente para esta transferencia.",
+    null,
+  ],
+  [
+    "CUSTOMER_DATA_MISMATCH",
+    422,
+    UnprocessableEntityError,
+    "Los datos del cliente no coinciden con los registros oficiales.",
+    { field: "name" },
+  ],
+  [
+    "TAX_ID_NOT_REGISTERED",
+    422,
+    UnprocessableEntityError,
+    "No encontramos ese CUIT en el Registro Nacional de Sociedades.",
+    null,
+  ],
+];
+
+test("los 7 de Raya PSP están en el catálogo, con el mismo HTTP", () => {
+  assert.equal(PSP_ERRORS.length, 7);
+  for (const [code, status, ErrorType] of PSP_ERRORS) {
+    assert.ok(
+      CATALOG.some(([c, s, t]) => c === code && s === status && t === ErrorType),
+      code,
+    );
+  }
+});
+
+for (const [code, status, ErrorType, message, data] of PSP_ERRORS) {
+  test(`${code}: ${ErrorType.name}, con su mensaje y su data`, () => {
+    const body = { error: { code, message, data } };
+    const error = makeError(status, body, {}, "key-psp");
+    assert.equal(error.constructor, ErrorType);
+    assert.equal(error.code, code);
+    assert.equal(error.httpStatus, status);
+    assert.equal(error.message, message);
+    assert.deepEqual(error.data, data);
+    assert.equal(error.idempotencyKey, "key-psp");
+    assert.equal(error.retryAfter, null);
+    if (error instanceof InvalidRequestError) {
+      assert.equal(error.param, (data?.field as string | undefined) ?? null);
+    }
+  });
+}
 
 for (const [code, status, ErrorType] of CATALOG) {
   test(`${code} (${status}) es ${ErrorType.name}`, () => {
