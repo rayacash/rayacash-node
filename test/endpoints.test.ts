@@ -1,4 +1,4 @@
-// Los 21 endpoints: método, ruta, query, body y headers exactos.
+// Los 33 endpoints: método, ruta, query, body y headers exactos.
 
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import {
   APIConnectionError,
+  APIError,
   AuthenticationError,
   Balance,
   ConflictError,
@@ -24,6 +25,11 @@ import {
   type PaymentCreateParams,
   type PaymentSimulateTransferParams,
   PermissionDeniedError,
+  PspBalance,
+  PspCustomer,
+  PspCustomerBalance,
+  type PspCustomerCreateParams,
+  PspTransfer,
   RateLimitError,
   Transfer,
   UnprocessableEntityError,
@@ -54,6 +60,31 @@ import {
   PAYOUT_ID,
   PAYOUT_LIST,
   PAYOUT_PENDING,
+  PSP_ACCOUNT,
+  PSP_BALANCE,
+  PSP_COMPANY_ID,
+  PSP_COMPANY_TAX_ID,
+  PSP_COMPANY_VERIFYING,
+  PSP_CUSTOMER_ACTIVE,
+  PSP_CUSTOMER_BALANCE,
+  PSP_CUSTOMER_BLOCKED,
+  PSP_CUSTOMER_CLOSED,
+  PSP_CUSTOMER_FAILED,
+  PSP_CUSTOMER_ID,
+  PSP_CUSTOMER_LIST,
+  PSP_CUSTOMER_PENDING,
+  PSP_CUSTOMER_REJECTED,
+  PSP_CUSTOMER_VERIFYING,
+  PSP_CUSTOMER_WITH_BALANCE,
+  PSP_DESTINATION,
+  PSP_INBOUND_ID,
+  PSP_OUTBOUND_ID,
+  PSP_PHOTO_URLS,
+  PSP_TAX_ID,
+  PSP_TRANSFER_INBOUND,
+  PSP_TRANSFER_LIST,
+  PSP_TRANSFER_OUTBOUND_COMPLETED,
+  PSP_TRANSFER_OUTBOUND_PENDING,
   REDIRECT_URI,
   SANDBOX_ORDER_ID,
   SANDBOX_ORDER_SUCCEEDED,
@@ -1359,6 +1390,1117 @@ test("identity.verifications: una cuenta sin Identidad activada o una clave de p
   assert.ok(error instanceof PermissionDeniedError);
   assert.equal(error.code, "SANDBOX_NOT_SUPPORTED");
   assert.equal(api.requests.length, 2); // los 4xx no se reintentan
+});
+
+// --- Raya PSP ---------------------------------------------------------------------------------
+
+const PSP_CUSTOMERS_URL = "https://api.raya.cash/v1/psp/customers";
+const PSP_TRANSFERS_URL = "https://api.raya.cash/v1/psp/transfers";
+const PSP_NAME = "María Laura Ejemplo";
+// Como lo escribe el SDK: JSON en ASCII, como json.dumps de Python.
+const PSP_NAME_JSON = '"Mar\\u00eda Laura Ejemplo"';
+const PSP_TRANSFER_PARAMS = {
+  customer: PSP_CUSTOMER_ID,
+  amount: 18350.5,
+  destination: PSP_DESTINATION,
+};
+const PSP_TRANSFER_BODY = `{"customer":"${PSP_CUSTOMER_ID}","amount":18350.5,"destination":"${PSP_DESTINATION}"}`;
+const PSP_KEY_MESSAGE =
+  "psp.transfers.create necesita idempotencyKey: generá un UUID v4 con crypto.randomUUID(), " +
+  "guardalo con la transferencia antes de llamar y reusalo en cada reintento: " +
+  "psp.transfers.create({ customer, amount, destination }, { idempotencyKey }).";
+
+test("psp.customers.create con una verificación de Identidad: solo identity_verification, 201 y el body en el orden del contrato", async () => {
+  const api = new MockAPI();
+  api.add(201, PSP_CUSTOMER_ACTIVE);
+  const customer = await api.client().psp.customers.create({
+    metadata: { plan: "pro" },
+    external_reference: "cliente-8812",
+    identity_verification: VERIFICATION_ID,
+  });
+  assert.equal(customer.constructor, PspCustomer);
+  assert.equal(customer.object, "psp.customer");
+  assert.equal(customer.id, PSP_CUSTOMER_ID);
+  assert.equal(customer.status, "active");
+  assert.equal(customer.cvu?.account, PSP_ACCOUNT);
+  assert.equal(customer.cvu?.alias, "maria_ejemplo");
+  assert.equal(customer.identity_verification, VERIFICATION_ID);
+  // El CUIL, el nombre y person_type los toma la API de la verificación.
+  assert.deepEqual(
+    [customer.tax_id, customer.name, customer.person_type],
+    [PSP_TAX_ID, PSP_NAME, "F"],
+  );
+  assert.equal(customer.lastResponse?.httpStatus, 201);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.href], ["POST", PSP_CUSTOMERS_URL]);
+  // El orden de pspexternal/api_params.py (CREATE_FIELDS), no el de los parámetros que pasaste.
+  assert.equal(
+    request.body,
+    '{"identity_verification":"idv_3kT9vQ2mXw7Lp0aBcD4eF6gH","external_reference":"cliente-8812",' +
+      '"metadata":{"plan":"pro"}}',
+  );
+  assert.equal(request.headers.get("content-type"), "application/json");
+  assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  // Sin clave propia, generamos un UUID v4 para esta llamada.
+  const key = request.headers.get("idempotency-key") ?? "";
+  assert.match(key, UUID_V4);
+  assert.equal(customer.lastResponse?.idempotencyKey, key);
+});
+
+test("psp.customers.create con las fotos: 202 verifying, con los datos y las tres URLs en orden, sin gender", async () => {
+  const api = new MockAPI();
+  api.add(202, PSP_CUSTOMER_VERIFYING);
+  const customer = await api.client().psp.customers.create({
+    selfie_url: PSP_PHOTO_URLS.selfie_url,
+    document_back_url: PSP_PHOTO_URLS.document_back_url,
+    document_front_url: PSP_PHOTO_URLS.document_front_url,
+    person_type: "F",
+    name: PSP_NAME,
+    tax_id: PSP_TAX_ID,
+    identity_verification: null,
+  });
+  // El sexo lo lee la API del frente del DNI: el body no lleva gender.
+  assert.equal(
+    api.last.body,
+    `{"tax_id":"${PSP_TAX_ID}","name":${PSP_NAME_JSON},"person_type":"F",` +
+      `"document_front_url":"${PSP_PHOTO_URLS.document_front_url}",` +
+      `"document_back_url":"${PSP_PHOTO_URLS.document_back_url}",` +
+      `"selfie_url":"${PSP_PHOTO_URLS.selfie_url}"}`,
+  );
+  // 202: seguimos en segundo plano y avisamos con psp.customer.activated o psp.customer.rejected.
+  assert.equal(customer.lastResponse?.httpStatus, 202);
+  assert.equal(customer.constructor, PspCustomer);
+  assert.equal(customer.status, "verifying");
+  assert.equal(customer.cvu, null);
+  assert.equal(customer.identity_verification, null);
+});
+
+test("psp.customers.create de una persona jurídica: sin prueba de identidad, 202 verifying", async () => {
+  const api = new MockAPI();
+  api.add(202, PSP_COMPANY_VERIFYING);
+  const company = await api.client().psp.customers.create(
+    {
+      tax_id: PSP_COMPANY_TAX_ID,
+      name: "Distribuidora Ejemplo S. A.",
+      person_type: "J",
+      external_reference: "empresa-42",
+    },
+    { idempotencyKey: "alta-empresa-42" },
+  );
+  assert.equal(
+    api.last.body,
+    `{"tax_id":"${PSP_COMPANY_TAX_ID}","name":"Distribuidora Ejemplo S. A.","person_type":"J",` +
+      '"external_reference":"empresa-42"}',
+  );
+  assert.equal(api.last.headers.get("idempotency-key"), "alta-empresa-42");
+  assert.equal(company.lastResponse?.httpStatus, 202);
+  assert.equal(company.id, PSP_COMPANY_ID);
+  assert.equal(company.person_type, "J");
+  assert.equal(company.status, "verifying");
+  assert.deepEqual(company.metadata, {});
+});
+
+test("psp.customers.create manda solo lo que pasás, con tu idempotencyKey", async () => {
+  const api = new MockAPI();
+  api.add(201, PSP_CUSTOMER_ACTIVE);
+  const customer = await api.client().psp.customers.create(
+    {
+      identity_verification: VERIFICATION_ID,
+      tax_id: null,
+      name: undefined,
+      person_type: null,
+      document_front_url: undefined,
+      document_back_url: null,
+      selfie_url: undefined,
+      external_reference: null,
+      metadata: null,
+    },
+    { idempotencyKey: "alta-cliente-8812" },
+  );
+  assert.equal(api.last.body, `{"identity_verification":"${VERIFICATION_ID}"}`);
+  assert.equal(api.last.headers.get("idempotency-key"), "alta-cliente-8812");
+  assert.equal(customer.lastResponse?.idempotencyKey, "alta-cliente-8812");
+});
+
+const PSP_CREATE_NAMES =
+  "identity_verification, tax_id, name, person_type, document_front_url, document_back_url, " +
+  "selfie_url, external_reference y metadata";
+// Sin identity_verification, los TypeError de tax_id y name terminan con esta pista.
+const PSP_IDENTITY_HINT =
+  " Si tu cliente se verificó con Raya Identity, mandá solo identity_verification.";
+const PSP_TAX_ID_MESSAGE =
+  "tax_id tiene que ser un string con el CUIL o CUIT de tu cliente, 11 dígitos sin guiones " +
+  '(como "27123456781"), no';
+const PSP_VERIFICATION_MESSAGE =
+  "identity_verification tiene que ser un string con el id de una verificación de Identidad " +
+  "(idv_…), no";
+
+const PSP_CREATE_INVALID: Array<
+  [string, unknown, typeof TypeError | typeof RangeError, string | RegExp]
+> = [
+  [
+    "params que no son un objeto",
+    PSP_TAX_ID,
+    TypeError,
+    `psp.customers.create recibe un objeto con sus parámetros (${PSP_CREATE_NAMES}).`,
+  ],
+  [
+    "terms_accepted_at, que la API no tiene",
+    { identity_verification: VERIFICATION_ID, terms_accepted_at: "2026-10-24T13:05:00-03:00" },
+    TypeError,
+    `psp.customers.create no acepta "terms_accepted_at": los parámetros son ${PSP_CREATE_NAMES}.`,
+  ],
+  [
+    "gender, que la API ya no tiene (el sexo sale del frente del DNI)",
+    { tax_id: PSP_TAX_ID, name: PSP_NAME, person_type: "F", gender: "F", ...PSP_PHOTO_URLS },
+    TypeError,
+    `psp.customers.create no acepta "gender": los parámetros son ${PSP_CREATE_NAMES}.`,
+  ],
+  [
+    "la idempotencyKey entre los parámetros",
+    { identity_verification: VERIFICATION_ID, idempotencyKey: "k" },
+    TypeError,
+    /^psp\.customers\.create no acepta idempotencyKey entre los parámetros: .*va en las opciones/,
+  ],
+  [
+    "la verificación entera en identity_verification, en vez de su id",
+    { identity_verification: IdentityVerification.constructFrom(VERIFICATION_VERIFIED) },
+    TypeError,
+    `${PSP_VERIFICATION_MESSAGE} IdentityVerification.`,
+  ],
+  [
+    "un identity_verification numérico",
+    { identity_verification: 1234 },
+    TypeError,
+    `${PSP_VERIFICATION_MESSAGE} number.`,
+  ],
+  [
+    "un identity_verification que es un objeto",
+    { identity_verification: { id: VERIFICATION_ID }, tax_id: PSP_TAX_ID },
+    TypeError,
+    `${PSP_VERIFICATION_MESSAGE} un objeto.`,
+  ],
+  [
+    "sin parámetros: falta tax_id, con la pista de Identidad",
+    {},
+    TypeError,
+    `${PSP_TAX_ID_MESSAGE} undefined.${PSP_IDENTITY_HINT}`,
+  ],
+  ["sin params", undefined, TypeError, `${PSP_TAX_ID_MESSAGE} undefined.${PSP_IDENTITY_HINT}`],
+  [
+    "un tax_id numérico",
+    { tax_id: 27123456781, name: PSP_NAME, person_type: "F", ...PSP_PHOTO_URLS },
+    TypeError,
+    `${PSP_TAX_ID_MESSAGE} number.${PSP_IDENTITY_HINT}`,
+  ],
+  [
+    "sin tax_id",
+    { name: PSP_NAME, person_type: "F", ...PSP_PHOTO_URLS },
+    TypeError,
+    `${PSP_TAX_ID_MESSAGE} undefined.${PSP_IDENTITY_HINT}`,
+  ],
+  [
+    "identity_verification en null, que es como no mandarlo",
+    { identity_verification: null, name: PSP_NAME, person_type: "F" },
+    TypeError,
+    `${PSP_TAX_ID_MESSAGE} undefined.${PSP_IDENTITY_HINT}`,
+  ],
+  [
+    "un name que no es un string",
+    { tax_id: PSP_COMPANY_TAX_ID, name: null, person_type: "J" },
+    TypeError,
+    "name tiene que ser un string con el nombre y apellido o la razón social de tu cliente, " +
+      `no null.${PSP_IDENTITY_HINT}`,
+  ],
+  [
+    "metadata que es un array",
+    { identity_verification: VERIFICATION_ID, metadata: ["a"] },
+    TypeError,
+    'metadata tiene que ser un objeto de string a string, como { plan: "pro" }.',
+  ],
+  [
+    "metadata que es un string",
+    {
+      tax_id: PSP_COMPANY_TAX_ID,
+      name: "Distribuidora Ejemplo S. A.",
+      person_type: "J",
+      metadata: "plan=pro",
+    },
+    TypeError,
+    /^metadata tiene que ser un objeto/,
+  ],
+];
+
+for (const [label, params, ErrorType, message] of PSP_CREATE_INVALID) {
+  test(`psp.customers.create valida antes de mandar: ${label}`, async () => {
+    const api = new MockAPI();
+    // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+    const untyped = api.client().psp.customers as any;
+    const error = await rejection(untyped.create(params));
+    assert.equal(error.constructor, ErrorType);
+    if (typeof message === "string") assert.equal(error.message, message);
+    else assert.match(error.message, message);
+    assert.deepEqual(api.requests, []);
+  });
+}
+
+test("lo demás lo valida la API: un person_type que falta o un tax_id con guiones llegan", async () => {
+  const api = new MockAPI();
+  const customers = api.client().psp.customers;
+  api.addError(400, "PARAMETER_MISSING", "Falta el parámetro person_type.", {
+    field: "person_type",
+  });
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  let error = await rejection((customers as any).create({ tax_id: PSP_TAX_ID, name: PSP_NAME }));
+  assert.ok(error instanceof InvalidRequestError);
+  assert.equal(error.code, "PARAMETER_MISSING");
+  assert.equal(error.param, "person_type");
+  assert.equal(api.last.body, `{"tax_id":"${PSP_TAX_ID}","name":${PSP_NAME_JSON}}`);
+  api.addError(
+    400,
+    "PARAMETER_INVALID",
+    "tax_id tiene que ser un CUIL o CUIT válido: 11 dígitos, sin guiones.",
+    { field: "tax_id" },
+  );
+  error = await rejection(
+    customers.create({
+      tax_id: "27-12345678-1",
+      name: PSP_NAME,
+      person_type: "F",
+      ...PSP_PHOTO_URLS,
+    }),
+  );
+  assert.ok(error instanceof InvalidRequestError);
+  assert.equal(error.param, "tax_id");
+  assert.equal(api.requests.length, 2); // los 4xx no se reintentan
+});
+
+test("la forma de psp.customers.create la responde la API: datos de más con identity_verification, fotos que faltan o sobran", async () => {
+  const api = new MockAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = api.client().psp.customers as any;
+  const extra =
+    "Con identity_verification no mandes tax_id, name, person_type ni fotos: los tomamos de la " +
+    "verificación.";
+
+  // Con identity_verification, un dato de más (aunque no sea un string) viaja igual: la API
+  // responde con el primero en el orden de CREATE_FIELDS.
+  api.addError(400, "PARAMETER_INVALID", extra, { field: "tax_id" });
+  let error = await rejection(
+    untyped.create({
+      person_type: "F",
+      name: PSP_NAME,
+      tax_id: 27123456781,
+      identity_verification: VERIFICATION_ID,
+    }),
+  );
+  assert.ok(error instanceof InvalidRequestError);
+  assert.equal(error.code, "PARAMETER_INVALID");
+  assert.equal(error.param, "tax_id");
+  assert.equal(error.message, extra);
+  assert.equal(
+    api.last.body,
+    `{"identity_verification":"${VERIFICATION_ID}","tax_id":27123456781,` +
+      `"name":${PSP_NAME_JSON},"person_type":"F"}`,
+  );
+
+  api.addError(400, "PARAMETER_INVALID", extra, { field: "selfie_url" });
+  error = await rejection(
+    untyped.create({
+      identity_verification: VERIFICATION_ID,
+      selfie_url: PSP_PHOTO_URLS.selfie_url,
+    }),
+  );
+  assert.equal(error.param, "selfie_url");
+  assert.equal(
+    api.last.body,
+    `{"identity_verification":"${VERIFICATION_ID}","selfie_url":"${PSP_PHOTO_URLS.selfie_url}"}`,
+  );
+
+  // Una persona humana sin identity_verification necesita las tres fotos.
+  api.addError(400, "PARAMETER_MISSING", "Falta el parámetro document_front_url.", {
+    field: "document_front_url",
+  });
+  error = await rejection(untyped.create({ tax_id: PSP_TAX_ID, name: PSP_NAME, person_type: "F" }));
+  assert.equal(error.code, "PARAMETER_MISSING");
+  assert.equal(error.param, "document_front_url");
+  assert.equal(
+    api.last.body,
+    `{"tax_id":"${PSP_TAX_ID}","name":${PSP_NAME_JSON},"person_type":"F"}`,
+  );
+
+  // Y una persona jurídica no lleva fotos.
+  api.addError(400, "PARAMETER_INVALID", "document_front_url solo se usa con person_type F.", {
+    field: "document_front_url",
+  });
+  error = await rejection(
+    untyped.create({
+      tax_id: PSP_COMPANY_TAX_ID,
+      name: "Distribuidora Ejemplo S. A.",
+      person_type: "J",
+      document_front_url: PSP_PHOTO_URLS.document_front_url,
+    }),
+  );
+  assert.equal(error.param, "document_front_url");
+  assert.equal(api.requests.length, 4); // los 4xx no se reintentan
+});
+
+test("los chequeos de la verificación los responde la API, en identity_verification", async () => {
+  const api = new MockAPI();
+  const customers = api.client().psp.customers;
+  const messages = [
+    // Sin un CUIL válido (por ejemplo, sexo X sin CUIL en el RENAPER) no hay tax_id que tomar.
+    "Esa verificación no tiene un CUIL válido: creá el cliente con tax_id, name, person_type y " +
+      "las fotos.",
+    "identity_verification no puede ser de la persona titular de tu cuenta.",
+  ];
+  for (const message of messages) {
+    api.addError(400, "PARAMETER_INVALID", message, { field: "identity_verification" });
+    const error = await rejection(customers.create({ identity_verification: VERIFICATION_ID }));
+    assert.ok(error instanceof InvalidRequestError);
+    assert.equal(error.code, "PARAMETER_INVALID");
+    assert.equal(error.param, "identity_verification");
+    assert.equal(error.message, message);
+  }
+  // Una verificación que ya usaste para otro cliente: el id de ese cliente, en error.data.customer.
+  api.addError(409, "CUSTOMER_ALREADY_EXISTS", "Ya tenés un cliente con ese CUIL o CUIT.", {
+    customer: PSP_CUSTOMER_ID,
+  });
+  const error = await rejection(customers.create({ identity_verification: VERIFICATION_ID }));
+  assert.ok(error instanceof ConflictError);
+  assert.equal(error.code, "CUSTOMER_ALREADY_EXISTS");
+  assert.equal(error.data?.customer, PSP_CUSTOMER_ID);
+  assert.equal(api.requests.length, 3);
+  for (const request of api.requests) {
+    assert.equal(request.body, `{"identity_verification":"${VERIFICATION_ID}"}`);
+  }
+});
+
+test("psp: las opciones se validan antes de mandar y los GET no llevan Idempotency-Key", async () => {
+  const api = new MockAPI();
+  const psp = api.client().psp;
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = psp as any;
+  const params: PspCustomerCreateParams = { tax_id: PSP_TAX_ID, name: PSP_NAME, person_type: "J" };
+  let error = await rejection(psp.customers.create(params, { idempotencyKey: "con espacios" }));
+  assert.ok(error instanceof RangeError);
+  assert.match(error.message, /^idempotencyKey tiene que tener de 1 a 255 caracteres/);
+  error = await rejection(untyped.customers.block(PSP_CUSTOMER_ID, { idempotency_key: "k" }));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /¿quisiste decir idempotencyKey\?/);
+  for (const call of [
+    () => untyped.customers.retrieve(PSP_CUSTOMER_ID, { idempotencyKey: "k" }),
+    () => untyped.customers.retrieveBalance(PSP_CUSTOMER_ID, { idempotencyKey: "k" }),
+    () => untyped.customers.list({ status: "active" }, { idempotencyKey: "k" }),
+    () => untyped.transfers.retrieve(PSP_OUTBOUND_ID, { idempotencyKey: "k" }),
+    () => untyped.transfers.list({ customer: PSP_CUSTOMER_ID }, { idempotencyKey: "k" }),
+    () => untyped.balance.retrieve({ idempotencyKey: "k" }),
+  ]) {
+    error = await rejection(call());
+    assert.ok(error instanceof RangeError);
+    assert.equal(error.message, "La Idempotency-Key solo va en los POST.");
+  }
+  assert.deepEqual(api.requests, []);
+});
+
+test("psp.customers.retrieve", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_CUSTOMER_WITH_BALANCE);
+  const customer = await api.client().psp.customers.retrieve(PSP_CUSTOMER_ID);
+  const request = api.last;
+  assert.deepEqual(
+    [request.method, request.url.href],
+    ["GET", `${PSP_CUSTOMERS_URL}/${PSP_CUSTOMER_ID}`],
+  );
+  assert.equal(request.body, undefined);
+  assert.equal(request.headers.get("content-type"), null);
+  assert.equal(request.headers.get("idempotency-key"), null);
+  assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(customer.constructor, PspCustomer);
+  assert.equal(customer.balance, 23649.5);
+  assert.equal(customer.cvu?.holder_name, "MARIA LAURA EJEMPLO");
+  assert.equal(customer.cvu?.status, "active");
+  assert.equal(customer.blocked_by, null);
+  assert.equal(customer.decline_reason, null);
+  assert.equal(Object.getPrototypeOf(customer.cvu), Object.prototype);
+  assert.equal(customer.lastResponse?.httpStatus, 200);
+  assert.equal(customer.lastResponse?.idempotencyKey, null);
+});
+
+test("psp.customers.retrieve: rejected y failed traen su motivo", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_CUSTOMER_REJECTED);
+  api.add(200, PSP_CUSTOMER_FAILED);
+  const rejected = await api.client().psp.customers.retrieve(PSP_CUSTOMER_ID);
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.decline_reason?.code, "face_mismatch");
+  assert.equal(rejected.cvu, null);
+  const failed = await api.client().psp.customers.retrieve(PSP_CUSTOMER_ID);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.decline_reason?.code, "bank_rejected");
+});
+
+test("psp: los ids van codificados en la ruta y con la clave de la llamada", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_CUSTOMER_ACTIVE);
+  await api.client().psp.customers.retrieve("../balance");
+  assert.equal(api.last.url.href, `${PSP_CUSTOMERS_URL}/..%2Fbalance`);
+  api.add(200, PSP_CUSTOMER_BLOCKED);
+  await api.client().psp.customers.block("pspc x/y", { apiKey: OTHER_KEY });
+  assert.equal(api.last.url.pathname, "/v1/psp/customers/pspc%20x%2Fy/block");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+  api.add(200, PSP_TRANSFER_INBOUND);
+  await api.client().psp.transfers.retrieve("pspt_1?x=#y");
+  assert.equal(api.last.url.pathname, "/v1/psp/transfers/pspt_1%3Fx%3D%23y");
+  assert.equal(api.last.url.search, "");
+});
+
+for (const method of ["retrieve", "retrieveBalance", "block", "unblock", "close", "recreate"]) {
+  for (const [value, message] of [
+    ["", "customerId no puede estar vacío."],
+    ["   ", "customerId no puede estar vacío."],
+    [".", 'customerId no puede ser "." ni "..".'],
+    ["..", 'customerId no puede ser "." ni "..".'],
+  ]) {
+    test(`psp.customers.${method} rechaza el id ${JSON.stringify(value)}`, async () => {
+      const api = new MockAPI();
+      // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+      const untyped = api.client().psp.customers as any;
+      const error = await rejection(untyped[method](value));
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.message, message);
+      assert.deepEqual(api.requests, []);
+    });
+  }
+
+  test(`psp.customers.${method}: el id tiene que ser un string`, async () => {
+    const api = new MockAPI();
+    // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+    const untyped = api.client().psp.customers as any;
+    const error = await rejection(untyped[method](1234));
+    assert.ok(error instanceof TypeError);
+    assert.equal(error.message, "customerId tiene que ser un string, no number.");
+    assert.deepEqual(api.requests, []);
+  });
+}
+
+test("psp.transfers.retrieve rechaza los ids vacíos, «.» y «..» y los que no son string", async () => {
+  const api = new MockAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = api.client().psp.transfers as any;
+  for (const [value, ErrorType, message] of [
+    ["", RangeError, "transferId no puede estar vacío."],
+    ["..", RangeError, 'transferId no puede ser "." ni "..".'],
+    [42, TypeError, "transferId tiene que ser un string, no number."],
+  ] as const) {
+    const error = await rejection(untyped.retrieve(value));
+    assert.equal(error.constructor, ErrorType);
+    assert.equal(error.message, message);
+  }
+  assert.deepEqual(api.requests, []);
+});
+
+test("psp.customers.list con todos los filtros, en el orden del contrato", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_CUSTOMER_LIST);
+  const page = await api.client().psp.customers.list({
+    cursor: "c1",
+    limit: 50,
+    created_lt: "2026-11-01T00:00:00-03:00",
+    created_gte: new Date("2026-10-01T03:00:00Z"),
+    external_reference: "cliente 8812",
+    status: "active",
+  });
+  assert.equal(page.constructor, ListObject);
+  assert.deepEqual(
+    [...page].map((customer) => customer.constructor),
+    [PspCustomer, PspCustomer],
+  );
+  assert.equal(page.has_more, true);
+  assert.equal(page.next_cursor, PSP_CUSTOMER_LIST.next_cursor);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.pathname], ["GET", "/v1/psp/customers"]);
+  assert.equal(request.body, undefined);
+  // El orden de LIST_CUSTOMER_FIELDS de la API.
+  assert.equal(
+    request.url.search,
+    "?status=active&external_reference=cliente+8812&created_gte=2026-10-01T03%3A00%3A00.000Z" +
+      "&created_lt=2026-11-01T00%3A00%3A00-03%3A00&limit=50&cursor=c1",
+  );
+});
+
+test("psp.customers.list sin filtros pide la URL pelada", async () => {
+  const api = new MockAPI();
+  api.add(200, { ...PSP_CUSTOMER_LIST, has_more: false, next_cursor: null });
+  await api.client().psp.customers.list();
+  assert.equal(api.last.url.href, PSP_CUSTOMERS_URL);
+});
+
+const PSP_LIST_INVALID: Array<
+  [string, string, unknown, typeof TypeError | typeof RangeError, string]
+> = [
+  [
+    "customers",
+    "tax_id, que iría en la URL (es un dato personal)",
+    { tax_id: PSP_TAX_ID },
+    TypeError,
+    'psp.customers.list no acepta "tax_id": los parámetros son status, external_reference, ' +
+      "created_gte, created_lt, limit y cursor.",
+  ],
+  [
+    "customers",
+    "direction, que es de las transferencias",
+    { direction: "inbound" },
+    TypeError,
+    'psp.customers.list no acepta "direction": los parámetros son status, external_reference, ' +
+      "created_gte, created_lt, limit y cursor.",
+  ],
+  [
+    "customers",
+    "params que no son un objeto",
+    "active",
+    TypeError,
+    "psp.customers.list recibe un objeto con sus parámetros (status, external_reference, " +
+      "created_gte, created_lt, limit y cursor).",
+  ],
+  [
+    "customers",
+    "limit con decimales",
+    { limit: 1.5 },
+    TypeError,
+    "limit no acepta un número con decimales.",
+  ],
+  ["customers", "un boolean", { status: true }, TypeError, "status no puede ser un boolean."],
+  [
+    "customers",
+    "un Date inválido",
+    { created_gte: new Date("x") },
+    RangeError,
+    "created_gte es una fecha inválida.",
+  ],
+  [
+    "transfers",
+    "external_reference, que es de los clientes",
+    { external_reference: "cliente-8812" },
+    TypeError,
+    'psp.transfers.list no acepta "external_reference": los parámetros son customer, direction, ' +
+      "status, created_gte, created_lt, limit y cursor.",
+  ],
+  [
+    "transfers",
+    "params que no son un objeto",
+    PSP_CUSTOMER_ID,
+    TypeError,
+    "psp.transfers.list recibe un objeto con sus parámetros (customer, direction, status, " +
+      "created_gte, created_lt, limit y cursor).",
+  ],
+  [
+    "transfers",
+    "un customer que es un objeto",
+    { customer: {} },
+    TypeError,
+    "customer no acepta un objeto.",
+  ],
+];
+
+for (const [service, label, params, ErrorType, message] of PSP_LIST_INVALID) {
+  test(`psp.${service}.list valida antes de mandar: ${label}`, async () => {
+    const api = new MockAPI();
+    // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+    const untyped = api.client().psp as any;
+    const error = await rejection(untyped[service].list(params));
+    assert.equal(error.constructor, ErrorType);
+    assert.equal(error.message, message);
+    assert.deepEqual(api.requests, []);
+  });
+}
+
+test("psp.customers.retrieveBalance", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_CUSTOMER_BALANCE);
+  const balance = await api.client().psp.customers.retrieveBalance(PSP_CUSTOMER_ID);
+  const request = api.last;
+  assert.deepEqual(
+    [request.method, request.url.href],
+    ["GET", `${PSP_CUSTOMERS_URL}/${PSP_CUSTOMER_ID}/balance`],
+  );
+  assert.equal(request.body, undefined);
+  assert.equal(request.headers.get("idempotency-key"), null);
+  assert.equal(balance.constructor, PspCustomerBalance);
+  assert.equal(balance.object, "psp.customer_balance");
+  assert.equal(balance.customer, PSP_CUSTOMER_ID);
+  assert.equal(balance.available, 23649.5);
+  assert.equal(balance.transferable, 23649.5);
+  assert.equal(balance.currency, "ARS");
+});
+
+const PSP_ACTIONS: Array<["block" | "unblock" | "close" | "recreate", Record<string, unknown>]> = [
+  ["block", PSP_CUSTOMER_BLOCKED],
+  ["unblock", PSP_CUSTOMER_WITH_BALANCE],
+  ["close", PSP_CUSTOMER_CLOSED],
+  ["recreate", PSP_CUSTOMER_ACTIVE],
+];
+
+for (const [action, response] of PSP_ACTIONS) {
+  test(`psp.customers.${action} va sin body y con una Idempotency-Key generada`, async () => {
+    const api = new MockAPI();
+    api.add(200, response);
+    const customer = await api.client().psp.customers[action](PSP_CUSTOMER_ID);
+    const request = api.last;
+    assert.deepEqual(
+      [request.method, request.url.href],
+      ["POST", `${PSP_CUSTOMERS_URL}/${PSP_CUSTOMER_ID}/${action}`],
+    );
+    assert.equal(request.body, undefined); // sin body, como un reembolso
+    assert.equal(request.headers.get("content-type"), null);
+    assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+    const key = request.headers.get("idempotency-key") ?? "";
+    assert.match(key, UUID_V4);
+    assert.equal(customer.lastResponse?.idempotencyKey, key);
+    assert.equal(customer.constructor, PspCustomer);
+    assert.equal(customer.status, response.status);
+  });
+
+  test(`psp.customers.${action} con tu idempotencyKey`, async () => {
+    const api = new MockAPI();
+    api.add(200, response);
+    const customer = await api
+      .client()
+      .psp.customers[action](PSP_CUSTOMER_ID, { idempotencyKey: `${action}-1` });
+    assert.equal(api.last.headers.get("idempotency-key"), `${action}-1`);
+    assert.equal(customer.lastResponse?.idempotencyKey, `${action}-1`);
+  });
+}
+
+test("psp.customers.close: el CVU queda closing, con el saldo intacto", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_CUSTOMER_CLOSED);
+  const customer = await api.client().psp.customers.close(PSP_CUSTOMER_ID);
+  assert.equal(customer.status, "closed");
+  assert.equal(customer.balance, 23649.5);
+  assert.equal(customer.cvu?.status, "closing");
+  assert.equal(customer.cvu?.closed_at, "2026-10-24T19:00:00Z");
+});
+
+test("psp.customers.recreate: 202 pending mientras creamos el CVU", async () => {
+  const api = new MockAPI();
+  api.add(202, PSP_CUSTOMER_PENDING);
+  const customer = await api.client().psp.customers.recreate(PSP_CUSTOMER_ID);
+  assert.equal(customer.lastResponse?.httpStatus, 202);
+  assert.equal(customer.status, "pending");
+  assert.equal(customer.cvu?.account, PSP_ACCOUNT);
+  assert.equal(customer.cvu?.alias, null);
+});
+
+test("psp.customers: CUSTOMER_STATUS_CONFLICT es ConflictError, con status y blocked_by, sin reintentos", async () => {
+  const api = new MockAPI();
+  const customers = api.client().psp.customers;
+  const message = "El cliente no está en un estado que permita esta operación. Revisá su status.";
+  api.addError(409, "CUSTOMER_STATUS_CONFLICT", message, { status: "blocked", blocked_by: "raya" });
+  let error = await rejection(customers.unblock(PSP_CUSTOMER_ID, { idempotencyKey: "u-1" }));
+  assert.ok(error instanceof ConflictError);
+  assert.ok(!(error instanceof IdempotencyError));
+  assert.equal(error.code, "CUSTOMER_STATUS_CONFLICT");
+  assert.equal(error.message, message);
+  assert.deepEqual(error.data, { status: "blocked", blocked_by: "raya" });
+  assert.equal(error.idempotencyKey, "u-1");
+  api.addError(409, "CUSTOMER_STATUS_CONFLICT", message, { status: "verifying", blocked_by: null });
+  error = await rejection(customers.block(PSP_CUSTOMER_ID));
+  assert.ok(error instanceof ConflictError);
+  assert.deepEqual(error.data, { status: "verifying", blocked_by: null });
+  api.addError(404, "CUSTOMER_NOT_FOUND", "No encontramos ese cliente.");
+  error = await rejection(customers.close(PSP_CUSTOMER_ID));
+  assert.ok(error instanceof NotFoundError);
+  assert.equal(error.code, "CUSTOMER_NOT_FOUND");
+  assert.equal(error.data, null);
+  assert.equal(api.requests.length, 3); // un 409 que no es de idempotencia no se reintenta
+});
+
+test("psp: sin clave propia, cada create y cada acción genera la suya", async () => {
+  const api = new MockAPI();
+  const customers = api.client().psp.customers;
+  api.add(201, PSP_CUSTOMER_ACTIVE);
+  api.add(201, PSP_CUSTOMER_ACTIVE);
+  api.add(200, PSP_CUSTOMER_BLOCKED);
+  api.add(200, PSP_CUSTOMER_BLOCKED);
+  const params: PspCustomerCreateParams = { identity_verification: VERIFICATION_ID };
+  const results = [
+    await customers.create(params),
+    await customers.create(params),
+    await customers.block(PSP_CUSTOMER_ID),
+    await customers.block(PSP_CUSTOMER_ID),
+  ];
+  const keys = api.requests.map((request) => request.headers.get("idempotency-key") ?? "");
+  for (const key of keys) assert.match(key, UUID_V4);
+  assert.equal(new Set(keys).size, 4);
+  assert.deepEqual(
+    results.map((customer) => customer.lastResponse?.idempotencyKey),
+    keys,
+  );
+});
+
+test("psp.customers.create reintenta con la misma Idempotency-Key y el mismo body", async () => {
+  const api = new MockAPI();
+  // El banco no respondió y no se creó nada: el SDK reintenta (Retry-After de 60 s o menos).
+  api.addError(503, "BANK_UNAVAILABLE", "No pudimos completar la operación.", null, {
+    headers: { "Retry-After": "60" },
+  });
+  api.add(201, PSP_CUSTOMER_ACTIVE);
+  const customer = await api.client().psp.customers.create({
+    identity_verification: VERIFICATION_ID,
+    external_reference: "cliente-8812",
+  });
+  assert.equal(customer.id, PSP_CUSTOMER_ID);
+  assert.equal(api.requests.length, 2);
+  const [first, second] = api.requests;
+  assert.match(first?.headers.get("idempotency-key") ?? "", UUID_V4);
+  assert.equal(second?.headers.get("idempotency-key"), first?.headers.get("idempotency-key"));
+  assert.equal(
+    first?.body,
+    `{"identity_verification":"${VERIFICATION_ID}","external_reference":"cliente-8812"}`,
+  );
+  assert.equal(second?.body, first?.body);
+});
+
+test("psp.transfers.create: el body en el orden del contrato y la idempotencyKey tuya", async () => {
+  const api = new MockAPI();
+  api.add(201, PSP_TRANSFER_OUTBOUND_PENDING);
+  const transfer = await api.client().psp.transfers.create(
+    {
+      destination: PSP_DESTINATION,
+      amount: new FakeDecimal("18350.50"),
+      customer: PSP_CUSTOMER_ID,
+    },
+    { idempotencyKey: IDEMPOTENCY_KEY },
+  );
+  assert.equal(transfer.constructor, PspTransfer);
+  assert.equal(transfer.object, "psp.transfer");
+  assert.equal(transfer.id, PSP_OUTBOUND_ID);
+  assert.equal(transfer.customer, PSP_CUSTOMER_ID);
+  assert.equal(transfer.direction, "outbound");
+  assert.equal(transfer.status, "pending");
+  assert.equal(transfer.amount, 18350.5);
+  assert.equal(transfer.fee, 61.37);
+  assert.equal(transfer.net_amount, 18289.13);
+  assert.equal(transfer.account, PSP_ACCOUNT);
+  assert.equal(transfer.counterparty.name, "Proveedora Ejemplo S. A.");
+  assert.equal(Object.getPrototypeOf(transfer.counterparty), Object.prototype);
+  assert.equal(transfer.reference, null);
+  assert.equal(transfer.lastResponse?.httpStatus, 201);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.href], ["POST", PSP_TRANSFERS_URL]);
+  // customer, amount y destination: el orden de TRANSFER_FIELDS, con el monto exacto.
+  assert.equal(request.body, PSP_TRANSFER_BODY);
+  assert.equal(request.headers.get("content-type"), "application/json");
+  assert.equal(request.headers.get("idempotency-key"), IDEMPOTENCY_KEY);
+  assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(transfer.lastResponse?.idempotencyKey, IDEMPOTENCY_KEY);
+});
+
+for (const [amount, expected] of [
+  [18350.5, "18350.5"],
+  ["18350.50", "18350.5"],
+  [" 1500 ", "1500"],
+  [1, "1"],
+  [18350n, "18350"],
+] as const) {
+  test(`psp.transfers.create con el monto ${JSON.stringify(String(amount))}`, async () => {
+    const api = new MockAPI();
+    api.add(201, PSP_TRANSFER_OUTBOUND_PENDING);
+    await api
+      .client()
+      .psp.transfers.create(
+        { customer: PSP_CUSTOMER_ID, amount, destination: "proveedor.ejemplo" },
+        { idempotencyKey: "k" },
+      );
+    assert.equal(
+      api.last.body,
+      `{"customer":"${PSP_CUSTOMER_ID}","amount":${expected},"destination":"proveedor.ejemplo"}`,
+    );
+  });
+}
+
+test("psp.transfers.create a una cuenta de Raya vuelve completed, con reference", async () => {
+  const api = new MockAPI();
+  api.add(201, PSP_TRANSFER_OUTBOUND_COMPLETED);
+  const transfer = await api
+    .client()
+    .psp.transfers.create(PSP_TRANSFER_PARAMS, { idempotencyKey: "k" });
+  assert.equal(transfer.status, "completed");
+  assert.equal(transfer.reference, "P5W9K2T7N4X1R8M3V6B0QH");
+});
+
+test("psp.transfers.create exige la idempotencyKey y valida antes de mandar", async () => {
+  const api = new MockAPI();
+  const transfers = api.client().psp.transfers;
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = transfers as any;
+  let error = await rejection(untyped.create(PSP_TRANSFER_PARAMS));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, PSP_KEY_MESSAGE);
+  error = await rejection(untyped.create(PSP_TRANSFER_PARAMS, {}));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, PSP_KEY_MESSAGE);
+  error = await rejection(untyped.create(PSP_TRANSFER_PARAMS, { idempotencyKey: null }));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, PSP_KEY_MESSAGE);
+  error = await rejection(untyped.create(PSP_TRANSFER_PARAMS, { idempotencyKey: 123 }));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^idempotencyKey tiene que ser un string/);
+  error = await rejection(
+    transfers.create(PSP_TRANSFER_PARAMS, { idempotencyKey: "con espacios" }),
+  );
+  assert.ok(error instanceof RangeError);
+  assert.match(error.message, /idempotencyKey/);
+  error = await rejection(
+    untyped.create({ ...PSP_TRANSFER_PARAMS, customer: 42 }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.equal(
+    error.message,
+    "customer tiene que ser un string con el id del cliente (pspc_…), no number.",
+  );
+  error = await rejection(
+    untyped.create({ amount: 1, destination: PSP_DESTINATION }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^customer tiene que ser un string/);
+  error = await rejection(
+    untyped.create({ ...PSP_TRANSFER_PARAMS, destination: 123 }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^destination tiene que ser un string/);
+  error = await rejection(
+    untyped.create({ customer: PSP_CUSTOMER_ID, destination: "x" }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^amount/);
+  error = await rejection(
+    untyped.create({ ...PSP_TRANSFER_PARAMS, amount: true }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^amount no puede ser un boolean/);
+  error = await rejection(
+    untyped.create({ ...PSP_TRANSFER_PARAMS, amount: "NaN" }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof RangeError);
+  assert.match(error.message, /^amount tiene que ser un número finito/);
+  error = await rejection(
+    untyped.create({ ...PSP_TRANSFER_PARAMS, idempotencyKey: "k" }, { idempotencyKey: "k" }),
+  );
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /va en las opciones/);
+  assert.deepEqual(api.requests, []);
+});
+
+for (const field of ["description", "external_reference", "tax_id"]) {
+  test(`psp.transfers.create no acepta ${field}: el body es customer, amount y destination`, async () => {
+    const api = new MockAPI();
+    // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+    const untyped = api.client().psp.transfers as any;
+    const error = await rejection(
+      untyped.create({ ...PSP_TRANSFER_PARAMS, [field]: "x" }, { idempotencyKey: "k" }),
+    );
+    assert.ok(error instanceof TypeError);
+    assert.equal(
+      error.message,
+      `psp.transfers.create no acepta "${field}": los parámetros son customer, amount y destination.`,
+    );
+    assert.deepEqual(api.requests, []);
+  });
+}
+
+test("psp.transfers.create reintenta con la misma Idempotency-Key y el mismo body", async () => {
+  const api = new MockAPI();
+  api.failWith(networkError("ECONNRESET"));
+  api.addError(503, "TEMPORARILY_UNAVAILABLE");
+  api.add(201, PSP_TRANSFER_OUTBOUND_PENDING);
+  const transfer = await api
+    .client()
+    .psp.transfers.create(PSP_TRANSFER_PARAMS, { idempotencyKey: IDEMPOTENCY_KEY });
+  assert.equal(transfer.id, PSP_OUTBOUND_ID);
+  assert.equal(api.requests.length, 3);
+  for (const request of api.requests) {
+    assert.equal(request.headers.get("idempotency-key"), IDEMPOTENCY_KEY);
+    assert.equal(request.body, PSP_TRANSFER_BODY);
+  }
+});
+
+test("psp.transfers.retrieve", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_TRANSFER_INBOUND);
+  const transfer = await api.client().psp.transfers.retrieve(PSP_INBOUND_ID);
+  const request = api.last;
+  assert.deepEqual(
+    [request.method, request.url.href],
+    ["GET", `${PSP_TRANSFERS_URL}/${PSP_INBOUND_ID}`],
+  );
+  assert.equal(request.body, undefined);
+  assert.equal(request.headers.get("idempotency-key"), null);
+  assert.equal(transfer.constructor, PspTransfer);
+  assert.equal(transfer.direction, "inbound");
+  assert.equal(transfer.status, "completed");
+  assert.equal(transfer.net_amount, 41866.1);
+  assert.equal(transfer.counterparty.alias, null);
+  assert.equal(transfer.description, "Alquiler noviembre");
+
+  api.addError(404, "TRANSFER_NOT_FOUND", "No encontramos esa transferencia.");
+  const error = await rejection(api.client().psp.transfers.retrieve(PSP_OUTBOUND_ID));
+  assert.ok(error instanceof NotFoundError);
+  assert.equal(error.code, "TRANSFER_NOT_FOUND");
+  assert.equal(api.requests.length, 2);
+});
+
+test("psp.transfers.list con todos los filtros, en el orden del contrato", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_TRANSFER_LIST);
+  const page = await api.client().psp.transfers.list({
+    cursor: "c1",
+    limit: 2,
+    created_lt: "2026-10-25T00:00:00+00:00",
+    created_gte: new Date(Date.UTC(2026, 9, 24, 3)),
+    status: "completed",
+    direction: "outbound",
+    customer: PSP_CUSTOMER_ID,
+  });
+  assert.equal(page.constructor, ListObject);
+  assert.deepEqual(
+    [...page].map((transfer) => transfer.constructor),
+    [PspTransfer, PspTransfer],
+  );
+  assert.equal(page.has_more, false);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.pathname], ["GET", "/v1/psp/transfers"]);
+  // El orden de LIST_TRANSFER_FIELDS de la API; el "+" de un offset viaja codificado.
+  assert.equal(
+    request.url.search,
+    `?customer=${PSP_CUSTOMER_ID}&direction=outbound&status=completed` +
+      "&created_gte=2026-10-24T03%3A00%3A00.000Z&created_lt=2026-10-25T00%3A00%3A00%2B00%3A00" +
+      "&limit=2&cursor=c1",
+  );
+  api.add(200, PSP_TRANSFER_LIST);
+  await api.client().psp.transfers.list();
+  assert.equal(api.last.url.href, PSP_TRANSFERS_URL);
+});
+
+test("psp.balance.retrieve", async () => {
+  const api = new MockAPI();
+  api.add(200, PSP_BALANCE);
+  const balance = await api.client().psp.balance.retrieve();
+  const request = api.last;
+  assert.deepEqual(
+    [request.method, request.url.href],
+    ["GET", "https://api.raya.cash/v1/psp/balance"],
+  );
+  assert.equal(request.body, undefined);
+  assert.equal(request.headers.get("idempotency-key"), null);
+  assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(balance.constructor, PspBalance);
+  assert.equal(balance.object, "psp.balance");
+  assert.equal(balance.available, 640200.5);
+  assert.equal(balance.customers_balance, 512875.25);
+  assert.equal(balance.currency, "ARS");
+  api.add(200, PSP_BALANCE);
+  await api.client().psp.balance.retrieve({ apiKey: OTHER_KEY, timeout: 5_000 });
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+});
+
+test("los errores de Raya PSP: la clase sale del status y ninguno se reintenta", async () => {
+  const api = new MockAPI();
+  const psp = api.client().psp;
+  const create = () => psp.customers.create({ identity_verification: VERIFICATION_ID });
+  // CUSTOMER_DATA_MISMATCH y TAX_ID_NOT_REGISTERED son de una persona jurídica (el RNS).
+  const createCompany = () =>
+    psp.customers.create({
+      tax_id: PSP_COMPANY_TAX_ID,
+      name: "Distribuidora Ejemplo S. A.",
+      person_type: "J",
+    });
+  const transfer = () => psp.transfers.create(PSP_TRANSFER_PARAMS, { idempotencyKey: "t-1" });
+
+  api.addError(403, "PSP_NOT_ACTIVATED");
+  let error = await rejection(create());
+  assert.ok(error instanceof PermissionDeniedError);
+  assert.equal(error.code, "PSP_NOT_ACTIVATED");
+
+  api.addError(409, "CUSTOMER_ALREADY_EXISTS", "Ya tenés un cliente con ese CUIL o CUIT.", {
+    customer: PSP_CUSTOMER_ID,
+  });
+  error = await rejection(create());
+  assert.ok(error instanceof ConflictError);
+  assert.equal(error.data?.customer, PSP_CUSTOMER_ID);
+
+  api.addError(422, "CUSTOMER_DATA_MISMATCH", "Mensaje.", { field: "name" });
+  error = await rejection(createCompany());
+  assert.ok(error instanceof UnprocessableEntityError);
+  assert.deepEqual(error.data, { field: "name" });
+
+  api.addError(422, "TAX_ID_NOT_REGISTERED");
+  error = await rejection(createCompany());
+  assert.ok(error instanceof UnprocessableEntityError);
+  assert.equal(error.code, "TAX_ID_NOT_REGISTERED");
+
+  api.addError(404, "CUSTOMER_NOT_FOUND", "No encontramos ese cliente.", { field: "customer" });
+  error = await rejection(transfer());
+  assert.ok(error instanceof NotFoundError);
+  assert.equal(error.param, "customer");
+  assert.equal(error.idempotencyKey, "t-1");
+
+  for (const code of [
+    "INSUFFICIENT_BALANCE",
+    "CUSTOMER_INSUFFICIENT_BALANCE",
+    "DESTINATION_INACTIVE",
+    "DESTINATION_NOT_SUPPORTED",
+  ]) {
+    api.addError(422, code);
+    error = await rejection(transfer());
+    assert.ok(error instanceof UnprocessableEntityError, code);
+    assert.equal(error.code, code);
+  }
+
+  api.addError(403, "TRANSFERS_BLOCKED");
+  error = await rejection(transfer());
+  assert.ok(error instanceof PermissionDeniedError);
+
+  api.addError(
+    403,
+    "SANDBOX_NOT_SUPPORTED",
+    "Este endpoint todavía no está disponible en un sandbox.",
+  );
+  error = await rejection(psp.customers.list());
+  assert.ok(error instanceof PermissionDeniedError);
+  assert.equal(error.code, "SANDBOX_NOT_SUPPORTED");
+
+  // 503 API_UNAVAILABLE es un interruptor: tampoco se reintenta.
+  api.addError(503, "API_UNAVAILABLE");
+  error = await rejection(psp.balance.retrieve());
+  assert.ok(error instanceof APIError);
+  assert.equal(error.code, "API_UNAVAILABLE");
+
+  assert.equal(api.requests.length, 12);
+});
+
+test("psp.customers.create: el tope de rechazos por CUIL (429 con Retry-After largo) no se reintenta", async () => {
+  const api = new MockAPI();
+  api.addError(
+    429,
+    "RATE_LIMITED",
+    "Hiciste demasiadas requests. Esperá unos segundos y probá de nuevo.",
+    { limit: "kyc_per_tax_id" },
+    { headers: { "Retry-After": "3600" } },
+  );
+  const error = await rejection(
+    api.client().psp.customers.create({
+      tax_id: PSP_TAX_ID,
+      name: PSP_NAME,
+      person_type: "F",
+      ...PSP_PHOTO_URLS,
+    }),
+  );
+  assert.ok(error instanceof RateLimitError);
+  assert.equal(error.retryAfter, 3600);
+  assert.deepEqual(error.data, { limit: "kyc_per_tax_id" });
+  assert.equal(api.requests.length, 1); // más de 60 s: el SDK no espera, lanza el error
 });
 
 // --- Sandbox: test helpers --------------------------------------------------------------------

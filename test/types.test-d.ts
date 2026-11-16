@@ -35,6 +35,10 @@ import {
   IdentityVerification as GlobalIdentityVerification,
   OAuth as GlobalOAuth,
   Payment as GlobalPayment,
+  PspBalance as GlobalPspBalance,
+  PspCustomer as GlobalPspCustomer,
+  PspDocumentRequest as GlobalPspDocumentRequest,
+  PspTransfer as GlobalPspTransfer,
   Transfer as GlobalTransfer,
   User as GlobalUser,
   type IdentityService,
@@ -53,6 +57,31 @@ import {
   type OAuthTokenOptions,
   type Payment,
   type PaymentSimulateTransferParams,
+  type PspBalance,
+  type PspBalanceService,
+  type PspCustomer,
+  type PspCustomerBalance,
+  type PspCustomerBlockedBy,
+  type PspCustomerCreateCompanyParams,
+  type PspCustomerCreateParams,
+  type PspCustomerCreateWithPhotosParams,
+  type PspCustomerCreateWithVerificationParams,
+  type PspCustomerDeclineCode,
+  type PspCustomerListParams,
+  type PspCustomerPersonType,
+  type PspCustomerService,
+  type PspCustomerStatus,
+  type PspCvuStatus,
+  type PspDocumentRequest,
+  type PspDocumentRequestStatus,
+  type PspService,
+  type PspTransfer,
+  type PspTransferCreateOptions,
+  type PspTransferCreateParams,
+  type PspTransferDirection,
+  type PspTransferListParams,
+  type PspTransferService,
+  type PspTransferStatus,
   type RayaClient,
   type RayaError,
   type RayaObject,
@@ -299,6 +328,186 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   check(files.selfie?.url).is<string>();
   check(files.selfie?.expires_at).is<string>();
 
+  // Raya PSP: con tu clave secreta.
+  check(client.psp).is<PspService>();
+  check(client.psp.customers).is<PspCustomerService>();
+  check(client.psp.transfers).is<PspTransferService>();
+  check(client.psp.balance).is<PspBalanceService>();
+  // Tres formas: con Raya Identity (solo identity_verification), una persona humana con las fotos
+  // o una persona jurídica. Lo que no va en una forma es `?: null`.
+  check<PspCustomerCreateParams>().is<
+    | PspCustomerCreateWithVerificationParams
+    | PspCustomerCreateWithPhotosParams
+    | PspCustomerCreateCompanyParams
+  >();
+  check<PspCustomerCreateWithVerificationParams["identity_verification"]>().is<string>();
+  check<PspCustomerCreateWithVerificationParams["tax_id"]>().is<null | undefined>();
+  check<PspCustomerCreateWithVerificationParams["name"]>().is<null | undefined>();
+  check<PspCustomerCreateWithVerificationParams["person_type"]>().is<null | undefined>();
+  check<PspCustomerCreateWithVerificationParams["document_front_url"]>().is<null | undefined>();
+  check<PspCustomerCreateWithVerificationParams["selfie_url"]>().is<null | undefined>();
+  check<PspCustomerCreateWithVerificationParams["external_reference"]>().is<
+    string | null | undefined
+  >();
+  check<PspCustomerCreateWithPhotosParams["identity_verification"]>().is<null | undefined>();
+  check<PspCustomerCreateWithPhotosParams["tax_id"]>().is<string>();
+  check<PspCustomerCreateWithPhotosParams["name"]>().is<string>();
+  check<PspCustomerCreateWithPhotosParams["person_type"]>().is<"F">();
+  check<PspCustomerCreateWithPhotosParams["document_front_url"]>().is<string>();
+  check<PspCustomerCreateWithPhotosParams["document_back_url"]>().is<string>();
+  check<PspCustomerCreateWithPhotosParams["selfie_url"]>().is<string>();
+  check<PspCustomerCreateCompanyParams["identity_verification"]>().is<null | undefined>();
+  check<PspCustomerCreateCompanyParams["person_type"]>().is<"J">();
+  check<PspCustomerCreateCompanyParams["document_back_url"]>().is<null | undefined>();
+  check<PspCustomerCreateCompanyParams["metadata"]>().is<
+    Record<string, string> | null | undefined
+  >();
+  const customerParams: PspCustomerCreateParams = {
+    identity_verification: "idv_x",
+    external_reference: "cliente-8812",
+    metadata: { plan: "pro" },
+  };
+  const customer = await client.psp.customers.create(customerParams, { idempotencyKey: "k" });
+  check(
+    await client.psp.customers.create({ identity_verification: verification.id }),
+  ).is<PspCustomer>();
+  check(customer).is<PspCustomer>();
+  check(customer.lastResponse).is<RayaResponse | null>();
+  check(customer.id).is<string>();
+  check(customer.object).is<"psp.customer">();
+  check(customer.status).is<PspCustomerStatus>();
+  check(customer.status).is<
+    "verifying" | "pending" | "active" | "blocked" | "closed" | "failed" | "rejected"
+  >();
+  check(customer.person_type).is<PspCustomerPersonType>();
+  check(customer.person_type).is<"F" | "J">();
+  check(customer.tax_id).is<string>();
+  check(customer.name).is<string>();
+  check(customer.balance).is<number>();
+  check(customer.currency).is<"ARS">();
+  check(customer.cvu).is<PspCustomer.Cvu | null>();
+  check(customer.cvu?.account).is<string>();
+  check(customer.cvu?.alias).is<string | null>();
+  check(customer.cvu?.status).is<PspCvuStatus>();
+  check<PspCvuStatus>().is<"active" | "closing" | "closed">();
+  check(customer.blocked_by).is<PspCustomerBlockedBy | null>();
+  check<PspCustomerBlockedBy>().is<"account" | "raya">();
+  check(customer.identity_verification).is<string | null>();
+  check(customer.decline_reason).is<PspCustomer.DeclineReason | null>();
+  check(customer.decline_reason?.code).is<PspCustomerDeclineCode>();
+  // Los 13 códigos de pspexternal/serializers.py (sin gender_mismatch: el sexo sale del DNI).
+  check<PspCustomerDeclineCode>().is<
+    | "image_unavailable"
+    | "image_invalid"
+    | "document_unreadable"
+    | "document_sides_mismatch"
+    | "document_mismatch"
+    | "identity_not_verified"
+    | "name_mismatch"
+    | "selfie_invalid"
+    | "face_mismatch"
+    | "verification_unavailable"
+    | "not_approved"
+    | "bank_rejected"
+    | "psp_disabled"
+  >();
+  check(customer.external_reference).is<string | null>();
+  check(customer.metadata).is<Record<string, string>>();
+  check(customer.created_at).is<string>();
+  check(
+    await client.psp.customers.create({
+      tax_id: "27123456781",
+      name: "María Laura Ejemplo",
+      person_type: "F",
+      document_front_url: "https://archivos.example.com/frente.jpg",
+      document_back_url: "https://archivos.example.com/dorso.jpg",
+      selfie_url: "https://archivos.example.com/selfie.jpg",
+      external_reference: "cliente-8812",
+    }),
+  ).is<PspCustomer>();
+  check(
+    await client.psp.customers.create({
+      tax_id: "30712345672",
+      name: "Distribuidora Ejemplo S. A.",
+      person_type: "J",
+      identity_verification: null,
+      selfie_url: undefined,
+    }),
+  ).is<PspCustomer>();
+  check(await client.psp.customers.retrieve("pspc_x")).is<PspCustomer>();
+  const customerFilters: PspCustomerListParams = {
+    status: "blocked",
+    external_reference: "cliente-8812",
+    created_gte: new Date(),
+    created_lt: "2026-11-01T00:00:00-03:00",
+    limit: 100,
+    cursor: "c1",
+  };
+  const customers = await client.psp.customers.list(customerFilters);
+  check(customers).is<ListObject<PspCustomer>>();
+  for (const item of customers) check(item).is<PspCustomer>();
+  for await (const item of customers.autoPagingIter()) check(item).is<PspCustomer>();
+  check(await customers.nextPage()).is<ListObject<PspCustomer>>();
+  check(await client.psp.customers.list()).is<ListObject<PspCustomer>>();
+  const customerBalance = await client.psp.customers.retrieveBalance("pspc_x");
+  check(customerBalance).is<PspCustomerBalance>();
+  check(customerBalance.object).is<"psp.customer_balance">();
+  check(customerBalance.customer).is<string>();
+  check(customerBalance.available).is<number>();
+  check(customerBalance.transferable).is<number>();
+  check(await client.psp.customers.block("pspc_x")).is<PspCustomer>();
+  check(await client.psp.customers.unblock("pspc_x", { idempotencyKey: "u" })).is<PspCustomer>();
+  check(await client.psp.customers.close("pspc_x")).is<PspCustomer>();
+  check(await client.psp.customers.recreate("pspc_x")).is<PspCustomer>();
+  check(await customer.block()).is<PspCustomer>();
+  check(await customer.unblock({ idempotencyKey: "u" })).is<PspCustomer>();
+  check(await customer.close()).is<PspCustomer>();
+  check(await customer.recreate()).is<PspCustomer>();
+  const pspTransferParams: PspTransferCreateParams = {
+    customer: customer.id,
+    amount: "18350.50",
+    destination: "proveedor.ejemplo",
+  };
+  const pspTransferOptions: PspTransferCreateOptions = { idempotencyKey: "k", timeout: 5_000 };
+  const pspTransfer = await client.psp.transfers.create(pspTransferParams, pspTransferOptions);
+  check(pspTransfer).is<PspTransfer>();
+  check(pspTransfer.object).is<"psp.transfer">();
+  check(pspTransfer.customer).is<string>();
+  check(pspTransfer.direction).is<PspTransferDirection>();
+  check(pspTransfer.direction).is<"inbound" | "outbound">();
+  check(pspTransfer.status).is<PspTransferStatus>();
+  check(pspTransfer.status).is<"pending" | "completed" | "failed" | "reversed">();
+  check(pspTransfer.amount).is<number>();
+  check(pspTransfer.fee).is<number>();
+  check(pspTransfer.net_amount).is<number>();
+  check(pspTransfer.currency).is<"ARS">();
+  check(pspTransfer.account).is<string>();
+  check(pspTransfer.counterparty).is<PspTransfer.Counterparty>();
+  check(pspTransfer.counterparty.tax_id).is<string | null>();
+  check(pspTransfer.description).is<string | null>();
+  check(pspTransfer.reference).is<string | null>();
+  check(await client.psp.transfers.retrieve("pspt_x")).is<PspTransfer>();
+  const pspTransferFilters: PspTransferListParams = {
+    customer: "pspc_x",
+    direction: "inbound",
+    status: "completed",
+    created_gte: new Date(),
+    created_lt: "2026-11-01T00:00:00-03:00",
+    limit: 100,
+    cursor: "c1",
+  };
+  const pspTransfers = await client.psp.transfers.list(pspTransferFilters);
+  check(pspTransfers).is<ListObject<PspTransfer>>();
+  for await (const item of pspTransfers.autoPagingIter()) check(item).is<PspTransfer>();
+  const pspBalance = await client.psp.balance.retrieve({ timeout: 5_000 });
+  check(pspBalance).is<PspBalance>();
+  check(pspBalance.object).is<"psp.balance">();
+  check(pspBalance.available).is<number>();
+  check(pspBalance.customers_balance).is<number>();
+  check<PspDocumentRequest["status"]>().is<PspDocumentRequestStatus>();
+  check<PspDocumentRequestStatus>().is<"open" | "submitted" | "closed">();
+  check<PspDocumentRequest["submitted_at"]>().is<string | null>();
+
   // Sandbox: con la clave secreta de prueba.
   check(client.testHelpers).is<SandboxHelpersService>();
   check(client.testHelpers.payments).is<SandboxPaymentHelpersService>();
@@ -324,7 +533,14 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   check<typeof event.livemode>().is<boolean | undefined>();
   check<Event["livemode"]>().is<boolean | undefined>();
   check(event.data.object).is<
-    Transfer | Payment | ConnectOrder | IdentityVerification | RayaObject
+    | Transfer
+    | Payment
+    | ConnectOrder
+    | IdentityVerification
+    | PspCustomer
+    | PspTransfer
+    | PspDocumentRequest
+    | RayaObject
   >();
   check<Extract<EventType, `identity.${string}`>>().is<
     | "identity.verification.verified"
@@ -332,8 +548,25 @@ export async function clientStyle(client: RayaClient): Promise<void> {
     | "identity.verification.expired"
     | "identity.verification.canceled"
   >();
+  check<Extract<EventType, `psp.${string}`>>().is<
+    | "psp.customer.activated"
+    | "psp.customer.updated"
+    | "psp.customer.failed"
+    | "psp.customer.rejected"
+    | "psp.customer.blocked"
+    | "psp.customer.unblocked"
+    | "psp.customer.closed"
+    | "psp.transfer.received"
+    | "psp.transfer.sent"
+    | "psp.transfer.failed"
+    | "psp.document_request.created"
+    | "psp.document_request.closed"
+  >();
   const object = event.data.object;
   if (object instanceof GlobalIdentityVerification) check(object).is<IdentityVerification>();
+  if (object instanceof GlobalPspCustomer) check(object).is<PspCustomer>();
+  if (object instanceof GlobalPspTransfer) check(object).is<PspTransfer>();
+  if (object instanceof GlobalPspDocumentRequest) check(object).is<PspDocumentRequest>();
 
   // @ts-expect-error: la idempotencyKey es obligatoria en transfers.create.
   await client.transfers.create({ amount: 1, destination: "x" });
@@ -396,6 +629,83 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   await client.testHelpers.payments.simulateTransfer("id", { amount: true });
   // @ts-expect-error: el id es un string.
   await client.testHelpers.payments.simulateTransfer(1234);
+  // Las tres formas válidas: cada error de abajo parte de una y rompe solo lo que dice.
+  const withVerification = { identity_verification: "idv_x" } as const;
+  const withPhotos = {
+    tax_id: "27123456781",
+    name: "María Laura Ejemplo",
+    person_type: "F",
+    document_front_url: "https://archivos.example.com/frente.jpg",
+    document_back_url: "https://archivos.example.com/dorso.jpg",
+    selfie_url: "https://archivos.example.com/selfie.jpg",
+  } as const;
+  const company = {
+    tax_id: "30712345672",
+    name: "Distribuidora Ejemplo S. A.",
+    person_type: "J",
+  } as const;
+  check(await client.psp.customers.create(withVerification)).is<PspCustomer>();
+  check(await client.psp.customers.create(withPhotos)).is<PspCustomer>();
+  check(await client.psp.customers.create(company)).is<PspCustomer>();
+  // @ts-expect-error: sin identity_verification, tax_id, name y person_type son obligatorios.
+  await client.psp.customers.create({});
+  // @ts-expect-error: con identity_verification no va tax_id: es el CUIL de la verificación.
+  await client.psp.customers.create({ ...withVerification, tax_id: "27123456781" });
+  // @ts-expect-error: ni name: es el nombre y apellido de la verificación.
+  await client.psp.customers.create({ ...withVerification, name: "María Laura Ejemplo" });
+  // @ts-expect-error: ni person_type: con identity_verification siempre es F.
+  await client.psp.customers.create({ ...withVerification, person_type: "F" });
+  // @ts-expect-error: ni las fotos.
+  await client.psp.customers.create({ ...withVerification, selfie_url: withPhotos.selfie_url });
+  // @ts-expect-error: identity_verification es el id (un string), no la verificación entera.
+  await client.psp.customers.create({ identity_verification: verification });
+  // @ts-expect-error: una persona humana sin identity_verification necesita las tres fotos.
+  await client.psp.customers.create({ ...company, person_type: "F" });
+  // @ts-expect-error: falta la foto del dorso del DNI.
+  await client.psp.customers.create({ ...withPhotos, document_back_url: undefined });
+  // @ts-expect-error: las fotos no van junto con identity_verification.
+  await client.psp.customers.create({ ...withPhotos, identity_verification: "idv_x" });
+  // @ts-expect-error: una persona jurídica no lleva fotos.
+  await client.psp.customers.create({ ...company, document_front_url: withPhotos.selfie_url });
+  // @ts-expect-error: ni identity_verification.
+  await client.psp.customers.create({ ...company, identity_verification: "idv_x" });
+  // @ts-expect-error: person_type es F o J.
+  await client.psp.customers.create({ ...withPhotos, person_type: "X" });
+  // @ts-expect-error: tax_id es un string.
+  await client.psp.customers.create({ ...company, tax_id: 30712345672 });
+  // @ts-expect-error: sin gender: el sexo lo leemos del frente del DNI.
+  await client.psp.customers.create({ ...withPhotos, gender: "F" });
+  // @ts-expect-error: sin términos: la API no tiene terms_accepted_at.
+  await client.psp.customers.create({ ...withVerification, terms_accepted_at: "2026-10-24" });
+  // @ts-expect-error: va en las opciones, no en los parámetros.
+  await client.psp.customers.create({ ...withVerification, idempotencyKey: "k" });
+  // @ts-expect-error: metadata es de string a string.
+  await client.psp.customers.create({ ...withVerification, metadata: { plan: 1 } });
+  // @ts-expect-error: open no es un estado de un cliente.
+  await client.psp.customers.list({ status: "open" });
+  // @ts-expect-error: sin filtro por tax_id (sería un dato personal en la URL).
+  await client.psp.customers.list({ tax_id: "27123456781" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.psp.customers.retrieve("pspc_x", { idempotencyKey: "k" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.psp.customers.retrieveBalance("pspc_x", { idempotencyKey: "k" });
+  // @ts-expect-error: las acciones van sin body: solo el id y las opciones.
+  await client.psp.customers.block("pspc_x", { reason: "x" });
+  const pspTransferBody = { customer: "pspc_x", amount: 1, destination: "x" };
+  // @ts-expect-error: la idempotencyKey es obligatoria en psp.transfers.create.
+  await client.psp.transfers.create(pspTransferBody);
+  // @ts-expect-error: la idempotencyKey es obligatoria en psp.transfers.create.
+  await client.psp.transfers.create(pspTransferBody, { timeout: 5_000 });
+  // @ts-expect-error: customer es obligatorio.
+  await client.psp.transfers.create({ amount: 1, destination: "x" }, key);
+  // @ts-expect-error: destination es un string, para que un CBU no pierda los ceros de adelante.
+  await client.psp.transfers.create({ customer: "pspc_x", amount: 1, destination: 123 }, key);
+  // @ts-expect-error: amount no acepta booleans.
+  await client.psp.transfers.create({ customer: "pspc_x", amount: true, destination: "x" }, key);
+  // @ts-expect-error: la lista de transferencias no filtra por external_reference.
+  await client.psp.transfers.list({ external_reference: "cliente-8812" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.psp.balance.retrieve({ idempotencyKey: "k" });
 }
 
 export async function globalStyle(): Promise<void> {
@@ -466,6 +776,39 @@ export async function globalStyle(): Promise<void> {
   ).is<IdentityVerification>();
   // @ts-expect-error: tampoco en el estilo global: los GET no llevan idempotencyKey.
   await GlobalIdentityVerification.retrieve("idv_x", { idempotencyKey: "k" });
+
+  const customer = await GlobalPspCustomer.create(
+    { tax_id: "30712345672", name: "Distribuidora Ejemplo S. A.", person_type: "J" },
+    { idempotencyKey: "k" },
+  );
+  check(customer).is<PspCustomer>();
+  check(
+    await GlobalPspCustomer.create({ identity_verification: verification.id }),
+  ).is<PspCustomer>();
+  // @ts-expect-error: tampoco en el estilo global: con identity_verification no va tax_id.
+  await GlobalPspCustomer.create({ identity_verification: "idv_x", tax_id: "27123456781" });
+  check(await GlobalPspCustomer.retrieve("pspc_x")).is<PspCustomer>();
+  check(await GlobalPspCustomer.list({ status: "active" })).is<ListObject<PspCustomer>>();
+  check(await GlobalPspCustomer.retrieveBalance("pspc_x")).is<PspCustomerBalance>();
+  check(await GlobalPspCustomer.block("pspc_x")).is<PspCustomer>();
+  check(await GlobalPspCustomer.unblock("pspc_x")).is<PspCustomer>();
+  check(await GlobalPspCustomer.close("pspc_x", { idempotencyKey: "c" })).is<PspCustomer>();
+  check(await GlobalPspCustomer.recreate("pspc_x")).is<PspCustomer>();
+  check(await customer.close()).is<PspCustomer>();
+  check(GlobalPspCustomer.constructFrom({ object: "psp.customer" })).is<PspCustomer>();
+  check(
+    await GlobalPspTransfer.create(
+      { customer: "pspc_x", amount: 18350.5, destination: "proveedor.ejemplo" },
+      { idempotencyKey: "k" },
+    ),
+  ).is<PspTransfer>();
+  check(await GlobalPspTransfer.retrieve("pspt_x")).is<PspTransfer>();
+  check(await GlobalPspTransfer.list({ customer: "pspc_x" })).is<ListObject<PspTransfer>>();
+  check(await GlobalPspBalance.retrieve()).is<PspBalance>();
+  // @ts-expect-error: tampoco en el estilo global: la idempotencyKey es obligatoria.
+  await GlobalPspTransfer.create({ customer: "pspc_x", amount: 1, destination: "x" });
+  // @ts-expect-error: tampoco en el estilo global: los GET no llevan idempotencyKey.
+  await GlobalPspBalance.retrieve({ idempotencyKey: "k" });
 }
 
 // Los nombres de la 1.1.0, deprecados hasta la 2.0.0: el código escrito para la 1.1.0 tiene que

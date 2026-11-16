@@ -8,6 +8,7 @@ import { IdentityService } from "./identityService.ts";
 import { ListObject, setRetrieveContext } from "./listObject.ts";
 import { OAuthService } from "./oauthService.ts";
 import { PaymentService } from "./paymentService.ts";
+import { PspService } from "./pspService.ts";
 import type { RayaObject } from "./rayaObject.ts";
 import { type PostRequestOptions, validateOptions } from "./requestOptions.ts";
 import {
@@ -157,6 +158,9 @@ function splitArguments(
  * `client.oauth.token()` lo consigue y no necesita clave. `client.connect.payouts` sale de tu
  * saldo y va con tu clave secreta.
  *
+ * Con Raya PSP (solo cuentas de empresa con Raya PSP activado), `client.psp` crea
+ * clientes con un CVU a su nombre y transfiere en su nombre, con tu clave secreta.
+ *
  * En un sandbox, el cliente va con su clave secreta de prueba (`raya_sk_test_…`) y la misma
  * `apiBase`: la clave decide el entorno. `client.testHelpers` solo funciona ahí (con una clave
  * real, la API responde `SANDBOX_ONLY`).
@@ -180,6 +184,12 @@ export class RayaClient {
    * una prueba de vida y el registro (con tu clave secreta).
    */
   readonly identity: IdentityService;
+  /**
+   * Raya PSP: `psp.customers`, `psp.transfers` y `psp.balance`, para darles a tus clientes un CVU
+   * a su nombre y transferir en su nombre (con tu clave secreta). Solo para empresas que son sujeto
+   * obligado, con Raya PSP activado.
+   */
+  readonly psp: PspService;
   /**
    * Lo que solo existe en un sandbox, con su clave secreta de prueba (`raya_sk_test_…`):
    * `testHelpers.payments.simulateTransfer`, para simular la transferencia de un pago de prueba.
@@ -232,6 +242,7 @@ export class RayaClient {
     this.users = new UserService(this.#requestor);
     this.connect = new ConnectService(this.#requestor);
     this.identity = new IdentityService(this.#requestor);
+    this.psp = new PspService(this.#requestor);
     this.testHelpers = new SandboxHelpersService(this.#requestor);
   }
 

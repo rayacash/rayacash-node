@@ -36,6 +36,12 @@ export interface ConnectPayoutCreateOptions extends RequestOptions {
   idempotencyKey: string;
 }
 
+/** Las de `psp.transfers.create`: la `idempotencyKey` es obligatoria. */
+export interface PspTransferCreateOptions extends RequestOptions {
+  /** Un UUID v4 que guardás con la transferencia **antes** de llamar y reusás en cada reintento. */
+  idempotencyKey: string;
+}
+
 const KEYS = ["apiKey", "timeout", "maxNetworkRetries", "idempotencyKey"];
 const SNAKE_CASE: Record<string, string> = {
   api_key: "apiKey",

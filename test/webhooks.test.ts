@@ -3,8 +3,12 @@ import { beforeEach, test } from "node:test";
 
 import {
   Event,
+  type EventType,
   IdentityVerification,
   Payment,
+  PspCustomer,
+  PspDocumentRequest,
+  PspTransfer,
   RayaObject,
   SignatureVerificationError,
   Webhook,
@@ -13,8 +17,19 @@ import {
 import { timing } from "../src/retry.ts";
 import {
   EVENT_PAYMENT_SUCCEEDED,
+  EVENT_PSP_TRANSFER_RECEIVED,
   EVENT_SANDBOX_PAYMENT_SUCCEEDED,
   EVENT_VERIFICATION_VERIFIED,
+  PSP_CUSTOMER_ACTIVE,
+  PSP_CUSTOMER_BLOCKED,
+  PSP_CUSTOMER_CLOSED,
+  PSP_CUSTOMER_FAILED,
+  PSP_CUSTOMER_REJECTED,
+  PSP_CUSTOMER_WITH_BALANCE,
+  PSP_DOCUMENT_REQUEST,
+  PSP_TRANSFER_INBOUND,
+  PSP_TRANSFER_OUTBOUND_COMPLETED,
+  PSP_TRANSFER_OUTBOUND_PENDING,
   VERIFICATION_CANCELED,
   VERIFICATION_DECLINED,
   VERIFICATION_PENDING,
@@ -363,3 +378,57 @@ test("constructEvent con un evento sin livemode (de antes de que existiera): und
   assert.equal(event.livemode ?? true, true);
   assert.equal(event.data.object.constructor, Payment);
 });
+
+// --- Raya PSP ---------------------------------------------------------------------------------
+
+test("constructEvent con psp.transfer.received: una PspTransfer, con el objeto como estaba", () => {
+  const body = Buffer.from(JSON.stringify(EVENT_PSP_TRANSFER_RECEIVED));
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+  assert.equal(event.constructor, Event);
+  assert.equal(event.type, "psp.transfer.received");
+  assert.equal(event.livemode, true);
+  const transfer = event.data.object;
+  assert.ok(transfer instanceof PspTransfer);
+  assert.equal(transfer.direction, "inbound");
+  assert.equal(transfer.amount, 42000);
+  assert.equal(transfer.counterparty.name, "Juan Ejemplo");
+  assert.deepEqual(JSON.parse(JSON.stringify(event)), EVENT_PSP_TRANSFER_RECEIVED);
+});
+
+// Los 12 de Raya PSP (webhooks/events.py de la API, grupo «Raya PSP»), con su objeto.
+const PSP_EVENTS: Array<[EventType, Record<string, unknown>, typeof RayaObject]> = [
+  ["psp.customer.activated", PSP_CUSTOMER_ACTIVE, PspCustomer],
+  ["psp.customer.updated", PSP_CUSTOMER_WITH_BALANCE, PspCustomer],
+  ["psp.customer.failed", PSP_CUSTOMER_FAILED, PspCustomer],
+  ["psp.customer.rejected", PSP_CUSTOMER_REJECTED, PspCustomer],
+  ["psp.customer.blocked", PSP_CUSTOMER_BLOCKED, PspCustomer],
+  ["psp.customer.unblocked", PSP_CUSTOMER_WITH_BALANCE, PspCustomer],
+  ["psp.customer.closed", PSP_CUSTOMER_CLOSED, PspCustomer],
+  ["psp.transfer.received", PSP_TRANSFER_INBOUND, PspTransfer],
+  ["psp.transfer.sent", PSP_TRANSFER_OUTBOUND_COMPLETED, PspTransfer],
+  ["psp.transfer.failed", { ...PSP_TRANSFER_OUTBOUND_PENDING, status: "failed" }, PspTransfer],
+  ["psp.document_request.created", PSP_DOCUMENT_REQUEST, PspDocumentRequest],
+  [
+    "psp.document_request.closed",
+    { ...PSP_DOCUMENT_REQUEST, status: "closed", closed_at: "2026-10-26T12:00:00Z" },
+    PspDocumentRequest,
+  ],
+];
+
+test("los 12 tipos de Raya PSP", () => {
+  assert.equal(PSP_EVENTS.length, 12);
+  assert.equal(new Set(PSP_EVENTS.map(([type]) => type)).size, 12);
+});
+
+for (const [type, object, cls] of PSP_EVENTS) {
+  test(`constructEvent con ${type}: data.object es ${cls.name}`, () => {
+    const body = JSON.stringify({ ...EVENT_PSP_TRANSFER_RECEIVED, type, data: { object } });
+    const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+    const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+    assert.equal(event.type, type);
+    assert.equal(event.data.object.constructor, cls);
+    assert.equal(event.data.object.object, object.object);
+    assert.deepEqual(JSON.parse(JSON.stringify(event.data.object)), object);
+  });
+}

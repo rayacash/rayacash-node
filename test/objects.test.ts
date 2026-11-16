@@ -11,6 +11,11 @@ import {
   ListObject,
   OAuthToken,
   Payment,
+  PspBalance,
+  PspCustomer,
+  PspCustomerBalance,
+  PspDocumentRequest,
+  PspTransfer,
   RayaObject,
   Transfer,
   User,
@@ -20,6 +25,9 @@ import {
   ACCESS_TOKEN,
   EVENT_ORDER_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
+  EVENT_PSP_CUSTOMER_ACTIVATED,
+  EVENT_PSP_DOCUMENT_REQUEST_CREATED,
+  EVENT_PSP_TRANSFER_RECEIVED,
   EVENT_SANDBOX_PAYMENT_SUCCEEDED,
   EVENT_VERIFICATION_CANCELED,
   EVENT_VERIFICATION_VERIFIED,
@@ -29,6 +37,18 @@ import {
   PAYMENT_SUCCEEDED,
   PAYOUT_COMPLETED,
   PAYOUT_PENDING,
+  PSP_BALANCE,
+  PSP_COMPANY_VERIFYING,
+  PSP_CUSTOMER_ACTIVE,
+  PSP_CUSTOMER_BALANCE,
+  PSP_CUSTOMER_CLOSED,
+  PSP_CUSTOMER_ID,
+  PSP_CUSTOMER_LIST,
+  PSP_CUSTOMER_REJECTED,
+  PSP_DOCUMENT_REQUEST,
+  PSP_TRANSFER_INBOUND,
+  PSP_TRANSFER_LIST,
+  PSP_TRANSFER_OUTBOUND_PENDING,
   SANDBOX_ACCESS_TOKEN,
   SANDBOX_ORDER_SUCCEEDED,
   SANDBOX_PAYMENT_SUCCEEDED,
@@ -425,6 +445,194 @@ test("IdentityVerificationFiles: su clase, sus entradas planas y las que faltan 
   assert.equal(biometric.back, null);
   assert.equal(biometric.selfie.url, VERIFICATION_FILES.selfie.url);
   assert.equal(Object.getPrototypeOf(biometric.selfie), Object.prototype);
+});
+
+// --- Raya PSP ---------------------------------------------------------------------------------
+
+test("un cliente de Raya PSP es su clase (el object lleva un punto), con acceso por propiedad", () => {
+  const customer = convert(PSP_CUSTOMER_ACTIVE);
+  assert.equal(customer.constructor, PspCustomer);
+  assert.equal(PspCustomer.OBJECT_NAME, "psp.customer");
+  assert.equal(customer instanceof RayaObject, true); // sin assert.ok: el instanceof achicaría el any
+  assert.equal(customer.id, PSP_CUSTOMER_ID);
+  assert.equal(customer.person_type, "F");
+  assert.equal(customer.balance, 0);
+  assert.equal(customer.cvu.account, PSP_CUSTOMER_ACTIVE.cvu.account);
+  assert.equal(customer.cvu.holder_name, "MARIA LAURA EJEMPLO");
+  assert.equal(Object.getPrototypeOf(customer.cvu), Object.prototype);
+  assert.equal(Object.getPrototypeOf(customer.metadata), Object.prototype);
+  const rejected = convert(PSP_CUSTOMER_REJECTED);
+  assert.equal(Object.getPrototypeOf(rejected.decline_reason), Object.prototype);
+  assert.equal(rejected.decline_reason.code, "face_mismatch");
+  const closed = convert(PSP_CUSTOMER_CLOSED);
+  assert.equal(closed.cvu.status, "closing");
+  assert.equal(closed.cvu.closed_at, "2026-10-24T19:00:00Z");
+});
+
+test("un cliente queda como el JSON crudo y en su orden (15 claves, sin terms_accepted_at)", () => {
+  for (const fixture of [PSP_CUSTOMER_ACTIVE, PSP_COMPANY_VERIFYING, PSP_CUSTOMER_REJECTED]) {
+    const customer = convert(fixture);
+    assert.deepEqual(JSON.parse(JSON.stringify(customer)), fixture);
+    assert.deepEqual(customer.toJSON(), fixture);
+    assert.deepEqual(Object.keys(customer), [
+      "id",
+      "object",
+      "status",
+      "person_type",
+      "tax_id",
+      "name",
+      "balance",
+      "currency",
+      "cvu",
+      "blocked_by",
+      "identity_verification",
+      "decline_reason",
+      "external_reference",
+      "metadata",
+      "created_at",
+    ]);
+  }
+  assert.deepEqual(Object.keys(PSP_CUSTOMER_ACTIVE.cvu), [
+    "account",
+    "alias",
+    "holder_name",
+    "status",
+    "created_at",
+    "closed_at",
+  ]);
+});
+
+test("las claves de la metadata de un cliente son tuyas: nunca se convierten", () => {
+  const customer = convert({
+    ...PSP_CUSTOMER_ACTIVE,
+    metadata: { object: "psp.transfer", keys: "x" },
+  });
+  assert.deepEqual(customer.metadata, { object: "psp.transfer", keys: "x" });
+  assert.equal(Object.getPrototypeOf(customer.metadata), Object.prototype);
+});
+
+test("un cliente conserva los campos y objetos desconocidos", () => {
+  const customer = convert({
+    ...PSP_CUSTOMER_ACTIVE,
+    nuevo_campo: { a: 1 },
+    otro: [{ object: "algo_nuevo", x: 2 }],
+  });
+  assert.equal(customer.constructor, PspCustomer);
+  assert.deepEqual(customer.nuevo_campo, { a: 1 });
+  assert.equal(customer.otro[0].constructor, RayaObject);
+  assert.equal(customer.otro[0].x, 2);
+});
+
+test("console.log de un cliente muestra la clase y los campos, no el cliente ni la respuesta", () => {
+  const shown = util.inspect(convert(PSP_CUSTOMER_ACTIVE));
+  assert.ok(shown.startsWith("PspCustomer {"));
+  assert.match(shown, /status: 'active'/);
+  assert.doesNotMatch(shown, /lastResponse|requestor/);
+});
+
+const PSP_OBJECTS: Array<[string, Record<string, unknown>, unknown, string[]]> = [
+  [
+    "el saldo de un cliente",
+    PSP_CUSTOMER_BALANCE,
+    PspCustomerBalance,
+    ["object", "customer", "available", "transferable", "currency"],
+  ],
+  [
+    "una transferencia de un cliente",
+    PSP_TRANSFER_OUTBOUND_PENDING,
+    PspTransfer,
+    [
+      "id",
+      "object",
+      "customer",
+      "direction",
+      "status",
+      "amount",
+      "fee",
+      "net_amount",
+      "currency",
+      "account",
+      "counterparty",
+      "description",
+      "reference",
+      "created_at",
+    ],
+  ],
+  [
+    "el saldo de Raya PSP",
+    PSP_BALANCE,
+    PspBalance,
+    ["object", "available", "customers_balance", "currency"],
+  ],
+  [
+    "un pedido de documentación",
+    PSP_DOCUMENT_REQUEST,
+    PspDocumentRequest,
+    [
+      "id",
+      "object",
+      "customer",
+      "status",
+      "subject",
+      "message",
+      "created_at",
+      "submitted_at",
+      "closed_at",
+    ],
+  ],
+];
+
+for (const [label, fixture, cls, keys] of PSP_OBJECTS) {
+  test(`${label} es su clase, registrada con el object entero, y queda como el JSON crudo`, () => {
+    const obj = convert(fixture);
+    assert.equal(obj.constructor, cls);
+    assert.equal((cls as typeof RayaObject).OBJECT_NAME, fixture.object);
+    assert.deepEqual(obj.toJSON(), fixture);
+    assert.deepEqual(Object.keys(obj), keys);
+    assert.ok(util.inspect(obj).startsWith(`${(cls as typeof RayaObject).name} {`));
+  });
+}
+
+test("la contraparte de una transferencia de un cliente es un objeto plano", () => {
+  const transfer = convert(PSP_TRANSFER_INBOUND);
+  assert.equal(Object.getPrototypeOf(transfer.counterparty), Object.prototype);
+  assert.deepEqual(Object.keys(transfer.counterparty), ["name", "tax_id", "account", "alias"]);
+  assert.equal(transfer.counterparty.alias, null);
+  assert.equal(typeof transfer.fee, "number");
+});
+
+test("una lista de clientes y una de transferencias hidratan cada elemento con su clase", () => {
+  const customers = convert(PSP_CUSTOMER_LIST);
+  assert.equal(customers.constructor, ListObject);
+  assert.ok(customers.data.every((item: unknown) => item instanceof PspCustomer));
+  assert.deepEqual(JSON.parse(JSON.stringify(customers)), PSP_CUSTOMER_LIST);
+  const transfers = convert(PSP_TRANSFER_LIST);
+  assert.deepEqual(
+    [...transfers].map((transfer: PspTransfer) => transfer.constructor),
+    [PspTransfer, PspTransfer],
+  );
+});
+
+test("un evento psp.* hidrata su objeto: PspCustomer, PspTransfer o PspDocumentRequest", () => {
+  for (const [fixture, cls] of [
+    [EVENT_PSP_CUSTOMER_ACTIVATED, PspCustomer],
+    [EVENT_PSP_TRANSFER_RECEIVED, PspTransfer],
+    [EVENT_PSP_DOCUMENT_REQUEST_CREATED, PspDocumentRequest],
+  ] as const) {
+    const event = Event.constructFrom(fixture);
+    assert.equal(event.constructor, Event);
+    assert.equal(event.type, fixture.type);
+    assert.equal(event.livemode, true);
+    assert.equal(event.data.object.constructor, cls);
+    assert.deepEqual(JSON.parse(JSON.stringify(event)), fixture);
+  }
+});
+
+test("PspCustomer.constructFrom arma un cliente sin respuesta HTTP", () => {
+  const customer = PspCustomer.constructFrom({ object: "psp.customer", id: PSP_CUSTOMER_ID });
+  assert.equal(customer.constructor, PspCustomer);
+  assert.equal(customer.lastResponse, null);
+  assert.equal(PspTransfer.constructFrom({ object: "psp.transfer" }).constructor, PspTransfer);
 });
 
 // --- Sandbox ----------------------------------------------------------------------------------

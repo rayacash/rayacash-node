@@ -559,3 +559,264 @@ export const EVENT_SANDBOX_PAYMENT_SUCCEEDED = {
   livemode: false,
   data: { object: SANDBOX_PAYMENT_SUCCEEDED },
 };
+
+// Raya PSP (los datos de ejemplo de raya.cash/api/psp, sintéticos): María Laura Ejemplo, una
+// clienta persona humana creada con su verificación de Identidad, y Distribuidora Ejemplo S. A., una
+// persona jurídica. Los CUIL y CUIT tienen el verificador cambiado a propósito, el CVU y el alias no
+// pueden existir (el alias lleva un guion bajo) y las comisiones no dejan deducir un porcentaje.
+export const PSP_CUSTOMER_ID = "pspc_7Hq2Lm9Xw4Tz1Bv8Nc3Kd6Rf";
+export const PSP_COMPANY_ID = "pspc_5Ns1Ve8Jt3Wd0Hx6Pq9Bk2Gm";
+export const PSP_OUTBOUND_ID = "pspt_4Wm8Qd2Zr6Yk0Ps3Hj7Ln1Cx";
+export const PSP_INBOUND_ID = "pspt_9Bf5Tn2Gv8Xc4Mr0Ka6Wq3Ez";
+export const PSP_DOCUMENT_REQUEST_ID = "pspd_2Kx7Rb4Np9Va1Dm6Ys3Lh8Qt";
+export const PSP_TAX_ID = "27123456781";
+export const PSP_COMPANY_TAX_ID = "30712345672";
+export const PSP_ACCOUNT = "0000123300537571545575";
+// A quién le transferís en nombre de la clienta: la proveedora de Crear una transferencia.
+export const PSP_DESTINATION = "0000123380736153041182";
+export const PSP_PHOTO_URLS = {
+  document_front_url: "https://archivos.example.com/kyc/cliente-8812/dni-frente.jpg",
+  document_back_url: "https://archivos.example.com/kyc/cliente-8812/dni-dorso.jpg",
+  selfie_url: "https://archivos.example.com/kyc/cliente-8812/selfie.jpg",
+};
+
+const PSP_CVU = {
+  account: PSP_ACCOUNT,
+  alias: "maria_ejemplo",
+  holder_name: "MARIA LAURA EJEMPLO",
+  status: "active",
+  created_at: "2026-10-24T13:05:12Z",
+  closed_at: null,
+};
+
+// Recién creada con su verificación de Identidad: 201, con el CVU y el alias.
+export const PSP_CUSTOMER_ACTIVE = {
+  id: PSP_CUSTOMER_ID,
+  object: "psp.customer",
+  status: "active",
+  person_type: "F",
+  tax_id: PSP_TAX_ID,
+  name: "María Laura Ejemplo",
+  balance: 0,
+  currency: "ARS",
+  cvu: PSP_CVU,
+  blocked_by: null,
+  identity_verification: VERIFICATION_ID,
+  decline_reason: null,
+  external_reference: "cliente-8812",
+  metadata: { plan: "pro" },
+  created_at: "2026-10-24T13:05:09Z",
+};
+
+// Más tarde, con saldo: lo que recibió menos lo que se transfirió en su nombre.
+export const PSP_CUSTOMER_WITH_BALANCE = { ...PSP_CUSTOMER_ACTIVE, balance: 23649.5 };
+
+// Con las fotos: 202, mientras validamos la identidad (sin CVU todavía).
+export const PSP_CUSTOMER_VERIFYING = {
+  ...PSP_CUSTOMER_ACTIVE,
+  status: "verifying",
+  cvu: null,
+  identity_verification: null,
+};
+
+// 202 mientras creamos el CVU: puede traer el número con el alias todavía en null.
+export const PSP_CUSTOMER_PENDING = {
+  ...PSP_CUSTOMER_ACTIVE,
+  status: "pending",
+  cvu: { ...PSP_CVU, alias: null },
+};
+
+export const PSP_CUSTOMER_BLOCKED = {
+  ...PSP_CUSTOMER_WITH_BALANCE,
+  status: "blocked",
+  blocked_by: "account",
+};
+
+// CVU dado de baja: conserva el saldo, y la baja en el banco sigue en curso (closing).
+export const PSP_CUSTOMER_CLOSED = {
+  ...PSP_CUSTOMER_WITH_BALANCE,
+  status: "closed",
+  cvu: { ...PSP_CVU, status: "closing", closed_at: "2026-10-24T19:00:00Z" },
+};
+
+export const PSP_CUSTOMER_REJECTED = {
+  ...PSP_CUSTOMER_VERIFYING,
+  status: "rejected",
+  decline_reason: {
+    code: "face_mismatch",
+    message: "No pudimos confirmar que la selfie sea de la misma persona del DNI.",
+  },
+};
+
+export const PSP_CUSTOMER_FAILED = {
+  ...PSP_CUSTOMER_ACTIVE,
+  status: "failed",
+  cvu: null,
+  decline_reason: {
+    code: "bank_rejected",
+    message: "El banco rechazó el alta del CVU. Podés volver a intentarlo con recrear.",
+  },
+};
+
+// Una persona jurídica: sin prueba biométrica, 202 mientras la revisamos.
+export const PSP_COMPANY_VERIFYING = {
+  id: PSP_COMPANY_ID,
+  object: "psp.customer",
+  status: "verifying",
+  person_type: "J",
+  tax_id: PSP_COMPANY_TAX_ID,
+  name: "Distribuidora Ejemplo S. A.",
+  balance: 0,
+  currency: "ARS",
+  cvu: null,
+  blocked_by: null,
+  identity_verification: null,
+  decline_reason: null,
+  external_reference: "empresa-42",
+  metadata: {},
+  created_at: "2026-10-24T13:20:00Z",
+};
+
+export const PSP_CUSTOMER_BALANCE = {
+  object: "psp.customer_balance",
+  customer: PSP_CUSTOMER_ID,
+  available: 23649.5,
+  transferable: 23649.5,
+  currency: "ARS",
+};
+
+export const PSP_TRANSFER_OUTBOUND_PENDING = {
+  id: PSP_OUTBOUND_ID,
+  object: "psp.transfer",
+  customer: PSP_CUSTOMER_ID,
+  direction: "outbound",
+  status: "pending",
+  amount: 18350.5,
+  fee: 61.37,
+  net_amount: 18289.13,
+  currency: "ARS",
+  account: PSP_ACCOUNT,
+  counterparty: {
+    name: "Proveedora Ejemplo S. A.",
+    tax_id: "30123456782",
+    account: PSP_DESTINATION,
+    alias: "proveedor.ejemplo",
+  },
+  description: "Transferencia",
+  reference: null,
+  created_at: "2026-10-24T15:20:31Z",
+};
+
+export const PSP_TRANSFER_OUTBOUND_COMPLETED = {
+  ...PSP_TRANSFER_OUTBOUND_PENDING,
+  status: "completed",
+  reference: "P5W9K2T7N4X1R8M3V6B0QH",
+};
+
+export const PSP_TRANSFER_INBOUND = {
+  id: PSP_INBOUND_ID,
+  object: "psp.transfer",
+  customer: PSP_CUSTOMER_ID,
+  direction: "inbound",
+  status: "completed",
+  amount: 42000,
+  fee: 133.9,
+  net_amount: 41866.1,
+  currency: "ARS",
+  account: PSP_ACCOUNT,
+  counterparty: {
+    name: "Juan Ejemplo",
+    tax_id: "20123456785",
+    account: "0000123319112992888845",
+    alias: null,
+  },
+  description: "Alquiler noviembre",
+  reference: "H3V8N1Q6X9T2K7M4R5B0WD",
+  created_at: "2026-10-24T14:47:03Z",
+};
+
+export const PSP_BALANCE = {
+  object: "psp.balance",
+  available: 640200.5,
+  customers_balance: 512875.25,
+  currency: "ARS",
+};
+
+export const PSP_DOCUMENT_REQUEST = {
+  id: PSP_DOCUMENT_REQUEST_ID,
+  object: "psp.document_request",
+  customer: PSP_CUSTOMER_ID,
+  status: "open",
+  subject: "Origen de los fondos",
+  message: "Mandanos un comprobante del origen de los fondos que recibió este cliente en octubre.",
+  created_at: "2026-10-24T18:40:00Z",
+  submitted_at: null,
+  closed_at: null,
+};
+
+export const PSP_CUSTOMER_NEXT_CURSOR =
+  "MjAyNi0xMC0yNFQxMzowNTowOVp8cHNwY183SHEyTG05WHc0VHoxQnY4TmMzS2Q2UmY";
+
+export const PSP_CUSTOMER_LIST = {
+  object: "list",
+  data: [PSP_CUSTOMER_WITH_BALANCE, PSP_COMPANY_VERIFYING],
+  has_more: true,
+  next_cursor: PSP_CUSTOMER_NEXT_CURSOR,
+};
+
+export const PSP_TRANSFER_LIST = {
+  object: "list",
+  data: [PSP_TRANSFER_OUTBOUND_COMPLETED, PSP_TRANSFER_INBOUND],
+  has_more: false,
+  next_cursor: null,
+};
+
+export function pspCustomerPage(ids: string[], nextCursor: string | null): Record<string, unknown> {
+  return {
+    object: "list",
+    data: ids.map((id) => ({ ...PSP_CUSTOMER_WITH_BALANCE, id })),
+    has_more: nextCursor !== null,
+    next_cursor: nextCursor,
+  };
+}
+
+export function pspTransferPage(ids: string[], nextCursor: string | null): Record<string, unknown> {
+  return {
+    object: "list",
+    data: ids.map((id) => ({ ...PSP_TRANSFER_INBOUND, id })),
+    has_more: nextCursor !== null,
+    next_cursor: nextCursor,
+  };
+}
+
+// Los eventos traen el objeto como estaba en ese momento, con livemode en true: Raya PSP no está
+// en el sandbox.
+export const EVENT_PSP_CUSTOMER_ACTIVATED = {
+  id: "evt_5hN2qW8xK3cV9mR1tZ6bL4jP",
+  object: "event",
+  type: "psp.customer.activated",
+  api_version: "2026-10-23",
+  created_at: "2026-10-24T13:05:12Z",
+  livemode: true,
+  data: { object: PSP_CUSTOMER_ACTIVE },
+};
+
+export const EVENT_PSP_TRANSFER_RECEIVED = {
+  id: "evt_8rT4mK1xW6bN3qV9cZ2hJ7pL",
+  object: "event",
+  type: "psp.transfer.received",
+  api_version: "2026-10-23",
+  created_at: "2026-10-24T14:47:03Z",
+  livemode: true,
+  data: { object: PSP_TRANSFER_INBOUND },
+};
+
+export const EVENT_PSP_DOCUMENT_REQUEST_CREATED = {
+  id: "evt_3jL7pX2mQ9vK5tR8bN1cW6hZ",
+  object: "event",
+  type: "psp.document_request.created",
+  api_version: "2026-10-23",
+  created_at: "2026-10-24T18:40:00Z",
+  livemode: true,
+  data: { object: PSP_DOCUMENT_REQUEST },
+};
