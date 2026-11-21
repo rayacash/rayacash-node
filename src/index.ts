@@ -34,6 +34,15 @@
 //     { idempotencyKey },
 //   );
 //
+// Facturador (facturas electrónicas de ARCA con tu punto de venta y tu certificado): crear una
+// factura con el DNI de tu cliente y el total, con la idempotencyKey obligatoria. Vuelve pending y
+// el resultado llega por webhook (invoice.issued, invoice.rejected o invoice.failed):
+//
+//   const invoice = await client.invoices.create(
+//     { dni: "12345678", amount: 15000 },
+//     { idempotencyKey },
+//   );
+//
 // En un sandbox, con su clave secreta de prueba (raya_sk_test_…), simular la transferencia:
 //
 //   const paid = await client.testHelpers.payments.simulateTransfer(payment.id);
@@ -103,6 +112,14 @@ export type {
 } from "./identityVerification.ts";
 export { IdentityVerification } from "./identityVerification.ts";
 export { IdentityVerificationFiles } from "./identityVerificationFiles.ts";
+export type {
+  InvoiceConcept,
+  InvoiceFailureCode,
+  InvoiceStatus,
+  InvoiceType,
+} from "./invoice.ts";
+export { Invoice } from "./invoice.ts";
+export type { InvoiceCreateParams, InvoiceListParams, InvoiceService } from "./invoiceService.ts";
 export { ListObject } from "./listObject.ts";
 export type { OAuthService, OAuthTokenOptions, OAuthTokenParams } from "./oauthService.ts";
 export { OAuth, OAuthToken } from "./oauthToken.ts";
@@ -139,6 +156,7 @@ export { PspTransfer } from "./pspTransfer.ts";
 export { RayaObject } from "./rayaObject.ts";
 export type {
   ConnectPayoutCreateOptions,
+  InvoiceCreateOptions,
   PostRequestOptions,
   PspTransferCreateOptions,
   RequestOptions,

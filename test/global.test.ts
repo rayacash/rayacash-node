@@ -12,6 +12,7 @@ import {
   config,
   IdentityVerification,
   IdentityVerificationFiles,
+  Invoice,
   ListObject,
   OAuth,
   OAuthToken,
@@ -31,10 +32,16 @@ import {
   BALANCE,
   CLIENT_ID,
   CLIENT_SECRET,
+  EVENT_INVOICE_ISSUED,
   EVENT_ORDER_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
   EVENT_PSP_CUSTOMER_ACTIVATED,
   EVENT_VERIFICATION_VERIFIED,
+  INVOICE_DNI,
+  INVOICE_ID,
+  INVOICE_ISSUED,
+  INVOICE_LIST,
+  INVOICE_PENDING,
   OAUTH_CODE,
   OAUTH_TOKEN,
   ORDER_ID,
@@ -717,6 +724,84 @@ for (const [action, verb] of [
     assert.deepEqual(api.requests, []);
   });
 }
+
+// --- Facturador -------------------------------------------------------------------------------
+
+test("Facturador: Invoice.create, retrieve y list, con la clave secreta", async () => {
+  const api = globalAPI();
+  api.add(202, INVOICE_PENDING);
+  const invoice = await Invoice.create(
+    { dni: INVOICE_DNI, amount: "15000.00", metadata: { pedido_id: "1042" } },
+    { idempotencyKey: "factura-1" },
+  );
+  assert.equal(invoice.constructor, Invoice);
+  assert.equal(invoice.status, "pending");
+  assert.equal(invoice.lastResponse?.httpStatus, 202);
+  assert.deepEqual([api.last.method, api.last.url.pathname], ["POST", "/v1/invoices"]);
+  assert.equal(
+    api.last.body,
+    `{"dni":"${INVOICE_DNI}","amount":15000,"metadata":{"pedido_id":"1042"}}`,
+  );
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(api.last.headers.get("idempotency-key"), "factura-1");
+
+  api.add(200, INVOICE_ISSUED);
+  const issued = await Invoice.retrieve(INVOICE_ID);
+  assert.equal(issued.cae, INVOICE_ISSUED.cae);
+  assert.deepEqual(
+    [api.last.method, api.last.url.pathname, api.last.headers.get("idempotency-key")],
+    ["GET", `/v1/invoices/${INVOICE_ID}`, null],
+  );
+
+  api.add(200, INVOICE_LIST);
+  const page = await Invoice.list({ status: "issued", limit: 2 });
+  assert.equal(page.constructor, ListObject);
+  assert.ok(page.data.every((item) => item instanceof Invoice));
+  assert.equal(api.last.url.search, "?status=issued&limit=2");
+  assert.equal(api.requests.length, 3);
+});
+
+test("Invoice.create exige la idempotencyKey y, sin clave, no manda nada", async () => {
+  const api = globalAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = Invoice as any;
+  let error = await rejection(untyped.create({ dni: INVOICE_DNI, amount: 15000 }));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^invoices\.create necesita idempotencyKey/);
+  config.apiKey = null;
+  error = await rejection(Invoice.retrieve(INVOICE_ID));
+  assert.ok(error instanceof AuthenticationError);
+  assert.equal(error.code, "API_KEY_MISSING");
+  error = await rejection(
+    Invoice.create({ dni: INVOICE_DNI, amount: 15000 }, { idempotencyKey: "factura-2" }),
+  );
+  assert.ok(error instanceof AuthenticationError);
+  assert.deepEqual(api.requests, []);
+});
+
+test("Invoice lee RAYA_SECRET_KEY y la apiKey de la llamada pisa la global", async () => {
+  const api = new MockAPI();
+  config.fetch = api.fetch;
+  process.env.RAYA_SECRET_KEY = OTHER_KEY;
+  api.add(200, INVOICE_ISSUED);
+  await Invoice.retrieve(INVOICE_ID);
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+  config.apiKey = TEST_KEY;
+  api.add(200, INVOICE_LIST);
+  await Invoice.list({}, { apiKey: OTHER_KEY });
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+});
+
+test("los eventos invoice.* de Webhook.constructEvent traen la Invoice", () => {
+  globalAPI();
+  const body = JSON.stringify(EVENT_INVOICE_ISSUED);
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const invoice = Webhook.constructEvent(body, header, WEBHOOK_SECRET).data.object;
+  assert.ok(invoice instanceof Invoice);
+  assert.equal(invoice.status, "issued");
+  assert.equal(invoice.cae, INVOICE_ISSUED.cae);
+  assert.equal(invoice.lastResponse, null);
+});
 
 // --- Sandbox ----------------------------------------------------------------------------------
 

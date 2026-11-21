@@ -8,6 +8,7 @@ import {
   Event,
   IdentityVerification,
   IdentityVerificationFiles,
+  Invoice,
   ListObject,
   OAuthToken,
   Payment,
@@ -23,6 +24,7 @@ import {
 import { convertValue } from "../src/rayaObject.ts";
 import {
   ACCESS_TOKEN,
+  EVENT_INVOICE_ISSUED,
   EVENT_ORDER_SUCCEEDED,
   EVENT_PAYMENT_SUCCEEDED,
   EVENT_PSP_CUSTOMER_ACTIVATED,
@@ -31,6 +33,13 @@ import {
   EVENT_SANDBOX_PAYMENT_SUCCEEDED,
   EVENT_VERIFICATION_CANCELED,
   EVENT_VERIFICATION_VERIFIED,
+  INVOICE_FAILED,
+  INVOICE_ID,
+  INVOICE_ISSUED,
+  INVOICE_LIST,
+  INVOICE_PENDING,
+  INVOICE_REJECTED,
+  INVOICE_TYPE_C_ISSUED,
   OAUTH_TOKEN,
   ORDER_SUCCEEDED,
   PAYMENT_PENDING,
@@ -633,6 +642,135 @@ test("PspCustomer.constructFrom arma un cliente sin respuesta HTTP", () => {
   assert.equal(customer.constructor, PspCustomer);
   assert.equal(customer.lastResponse, null);
   assert.equal(PspTransfer.constructFrom({ object: "psp.transfer" }).constructor, PspTransfer);
+});
+
+// --- Facturador -------------------------------------------------------------------------------
+
+// Las 20 claves de una factura, en el orden en que las manda la API.
+const INVOICE_KEYS = [
+  "id",
+  "object",
+  "type",
+  "status",
+  "amount",
+  "net_amount",
+  "vat_amount",
+  "currency",
+  "dni",
+  "point_of_sale",
+  "number",
+  "concept",
+  "cae",
+  "cae_expires_on",
+  "issued_on",
+  "failure_reason",
+  "arca_messages",
+  "metadata",
+  "issued_at",
+  "created_at",
+];
+
+test("una factura es su clase, con acceso por propiedad y sus sub-objetos planos", () => {
+  const invoice = convert(INVOICE_REJECTED);
+  assert.equal(invoice.constructor, Invoice);
+  assert.equal(Invoice.OBJECT_NAME, "invoice");
+  assert.equal(invoice instanceof RayaObject, true); // sin assert.ok: el instanceof achicaría el any
+  assert.equal(invoice.type, "B");
+  assert.equal(invoice.status, "rejected");
+  assert.equal(invoice.vat_amount, 2603.31);
+  assert.equal(Object.getPrototypeOf(invoice.failure_reason), Object.prototype);
+  assert.equal(invoice.failure_reason.code, "arca_rejected");
+  assert.ok(Array.isArray(invoice.arca_messages));
+  assert.equal(Object.getPrototypeOf(invoice.arca_messages[0]), Object.prototype);
+  assert.deepEqual(Object.keys(invoice.arca_messages[0]), ["type", "code", "message"]);
+  assert.equal(typeof invoice.arca_messages[0].code, "number");
+  assert.equal(Object.getPrototypeOf(invoice.metadata), Object.prototype);
+  const issued = convert(INVOICE_ISSUED);
+  assert.equal(issued.cae, INVOICE_ISSUED.cae);
+  assert.equal(issued.number, 1234);
+  assert.equal(issued.failure_reason, null);
+  const typeC = convert(INVOICE_TYPE_C_ISSUED);
+  assert.equal(typeC.type, "C");
+  assert.equal(typeC.vat_amount, null);
+  assert.equal(typeC.net_amount, typeC.amount);
+});
+
+test("una factura queda como el JSON crudo y en su orden (20 claves)", () => {
+  assert.equal(INVOICE_KEYS.length, 20);
+  for (const fixture of [
+    INVOICE_PENDING,
+    INVOICE_ISSUED,
+    INVOICE_REJECTED,
+    INVOICE_FAILED,
+    INVOICE_TYPE_C_ISSUED,
+  ]) {
+    const invoice = convert(fixture);
+    assert.deepEqual(JSON.parse(JSON.stringify(invoice)), fixture);
+    assert.deepEqual(invoice.toJSON(), fixture);
+    assert.deepEqual({ ...invoice }, fixture);
+    assert.deepEqual(Object.keys(invoice), INVOICE_KEYS);
+  }
+  assert.deepEqual(Object.keys(INVOICE_REJECTED.failure_reason), ["code", "message"]);
+});
+
+test("las claves de la metadata de una factura son tuyas: nunca se convierten", () => {
+  const invoice = convert({ ...INVOICE_PENDING, metadata: { object: "invoice", type: "C" } });
+  assert.deepEqual(invoice.metadata, { object: "invoice", type: "C" });
+  assert.equal(Object.getPrototypeOf(invoice.metadata), Object.prototype);
+});
+
+test("una factura conserva los campos y objetos desconocidos", () => {
+  const invoice = convert({
+    ...INVOICE_ISSUED,
+    qr_url: "https://example.com/qr",
+    otro: [{ object: "algo_nuevo", x: 2 }],
+    arca_messages: [{ type: "warning", code: 1, message: "Un tipo nuevo.", extra: true }],
+  });
+  assert.equal(invoice.constructor, Invoice);
+  assert.equal(invoice.qr_url, "https://example.com/qr");
+  assert.equal(invoice.otro[0].constructor, RayaObject);
+  assert.equal(invoice.otro[0].x, 2);
+  assert.deepEqual(invoice.arca_messages[0], {
+    type: "warning",
+    code: 1,
+    message: "Un tipo nuevo.",
+    extra: true,
+  });
+});
+
+test("console.log de una factura muestra la clase y los campos, no el cliente ni la respuesta", () => {
+  const shown = util.inspect(convert(INVOICE_ISSUED));
+  assert.ok(shown.startsWith("Invoice {"));
+  assert.match(shown, /status: 'issued'/);
+  assert.doesNotMatch(shown, /lastResponse|requestor/);
+});
+
+test("una lista de facturas hidrata cada elemento con su clase", () => {
+  const page = convert(INVOICE_LIST);
+  assert.equal(page.constructor, ListObject);
+  assert.deepEqual(
+    [...page].map((invoice: Invoice) => invoice.constructor),
+    [Invoice, Invoice],
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(page)), INVOICE_LIST);
+});
+
+test("un evento invoice.* hidrata su Invoice", () => {
+  const event = Event.constructFrom(EVENT_INVOICE_ISSUED);
+  assert.equal(event.constructor, Event);
+  assert.equal(event.type, "invoice.issued");
+  assert.equal(event.livemode, true);
+  assert.equal(event.data.object.constructor, Invoice);
+  assert.deepEqual(JSON.parse(JSON.stringify(event)), EVENT_INVOICE_ISSUED);
+});
+
+test("Invoice.constructFrom arma una factura sin respuesta HTTP", () => {
+  const invoice = Invoice.constructFrom({ object: "invoice", id: INVOICE_ID, status: "issued" });
+  assert.equal(invoice.constructor, Invoice);
+  assert.equal(invoice.status, "issued");
+  assert.equal(invoice.lastResponse, null);
+  // Sin object, constructFrom igual arma la clase que lo llama.
+  assert.equal(Invoice.constructFrom({ id: INVOICE_ID }).constructor, Invoice);
 });
 
 // --- Sandbox ----------------------------------------------------------------------------------

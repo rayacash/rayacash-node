@@ -1,5 +1,6 @@
 import type { ConnectOrder } from "./connectOrder.ts";
 import type { IdentityVerification } from "./identityVerification.ts";
+import type { Invoice } from "./invoice.ts";
 import type { Payment } from "./payment.ts";
 import type { PspCustomer } from "./pspCustomer.ts";
 import type { PspDocumentRequest } from "./pspDocumentRequest.ts";
@@ -31,6 +32,9 @@ export type EventType =
   | "identity.verification.declined"
   | "identity.verification.expired"
   | "identity.verification.canceled"
+  | "invoice.issued"
+  | "invoice.rejected"
+  | "invoice.failed"
   | "psp.customer.activated"
   | "psp.customer.updated"
   | "psp.customer.failed"
@@ -57,9 +61,10 @@ export type EventType =
  * ocurrió el evento. Los `connect.order.*` le llegan al dueño de la app: el comercio conectado
  * recibe los `payment.*` de ese mismo cobro. Los `identity.verification.*` traen la
  * `IdentityVerification`, siempre con `person` en `null`: pedí los datos de la persona con
- * `client.identity.verifications.retrieve(id)`. Los `psp.*` (Raya PSP) traen el `PspCustomer`, la
- * `PspTransfer` o el `PspDocumentRequest`. `webhook.test` (el botón «Enviar evento de prueba»)
- * trae `{ object: "test", … }`: respondé 2xx e ignoralo.
+ * `client.identity.verifications.retrieve(id)`. Los `invoice.*` (Facturador) traen la `Invoice`.
+ * Los `psp.*` (Raya PSP) traen el `PspCustomer`, la `PspTransfer` o el `PspDocumentRequest`.
+ * `webhook.test` (el botón «Enviar evento de prueba») trae `{ object: "test", … }`: respondé 2xx e
+ * ignoralo.
  */
 export class Event extends RayaObject {
   static override readonly OBJECT_NAME = "event";
@@ -87,6 +92,7 @@ export declare namespace Event {
       | Payment
       | ConnectOrder
       | IdentityVerification
+      | Invoice
       | PspCustomer
       | PspTransfer
       | PspDocumentRequest

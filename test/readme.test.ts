@@ -158,6 +158,10 @@ test("el sandbox: condicionado a que la cuenta lo tenga y con lo que hace falta 
     line("7. **Para verificar identidades"),
     /disponible en el \[sandbox\]\(#sandbox\):/,
   );
+  assert.match(
+    line("9. **Para emitir facturas electrónicas"),
+    /no está disponible en el \[sandbox\]\(#sandbox\)\.$/,
+  );
   assert.match(line("**Probar en un sandbox.**"), /Si tu cuenta tiene \[sandbox\]\(#sandbox\)/);
   assert.match(line("El `fetch` falso prueba tu código sin red"), /si tu cuenta lo tiene\.$/);
   const sandbox = README.slice(
@@ -214,12 +218,12 @@ const PSP_EVENT_TYPES = [
   "psp.document_request.closed",
 ];
 
-test("la sección Raya PSP: entre Identidad y Raya Connect, en el índice y con la referencia", () => {
+test("la sección Raya PSP: entre Identidad y el Facturador, en el índice y con la referencia", () => {
   assert.ok(
     README.includes(
-      "\n- [Identidad](#identidad)\n- [Raya PSP](#raya-psp)\n- [Raya Connect](#raya-connect)\n",
+      "\n- [Identidad](#identidad)\n- [Raya PSP](#raya-psp)\n- [Facturador](#facturador)\n",
     ),
-    "falta en el índice, entre Identidad y Raya Connect",
+    "falta en el índice, entre Identidad y Facturador",
   );
   const start = README.indexOf("\n## Raya PSP\n");
   assert.ok(README.indexOf("\n## Identidad\n") < start, "va después de «Identidad»");
@@ -327,6 +331,132 @@ test("los 7 códigos de Raya PSP están en «Errores» y los 12 eventos en «Web
   for (const code of PSP_CODES) assert.ok(errors.includes(`\`${code}\``), code);
   const webhooks = readmeSection("Webhooks");
   for (const type of PSP_EVENT_TYPES) assert.ok(webhooks.includes(`\`${type}\``), type);
+});
+
+const FACTURADOR_CODES = ["FACTURADOR_NOT_READY", "INVOICE_NOT_FOUND"];
+
+const INVOICE_EVENT_TYPES = ["invoice.issued", "invoice.rejected", "invoice.failed"];
+
+// failure_reason.code y su message, con el texto de la API.
+const INVOICE_FAILURES: Array<[string, string]> = [
+  ["arca_rejected", "ARCA rechazó la factura: arca_messages dice por qué."],
+  [
+    "facturador_not_ready",
+    "Tu Facturador no estaba listo para emitirla. Revisalo en Negocios › Facturador y creá la " +
+      "factura de nuevo.",
+  ],
+  ["not_issued", "No pudimos emitirla y no quedó registrada en ARCA. Creala de nuevo."],
+  [
+    "numbering_conflict",
+    "Otro sistema emitió comprobantes con el mismo punto de venta. Usá un punto de venta solo " +
+      "para Raya y creá la factura de nuevo.",
+  ],
+  [
+    "account_unavailable",
+    "Tu cuenta no puede emitir facturas en este momento. Escribinos a soporte@raya.cash.",
+  ],
+];
+
+test("la sección Facturador: entre Raya PSP y Raya Connect, en el índice y con la referencia", () => {
+  assert.ok(
+    README.includes(
+      "\n- [Raya PSP](#raya-psp)\n- [Facturador](#facturador)\n- [Raya Connect](#raya-connect)\n",
+    ),
+    "falta en el índice, entre Raya PSP y Raya Connect",
+  );
+  const start = README.indexOf("\n## Facturador\n");
+  assert.ok(README.indexOf("\n## Raya PSP\n") < start, "va después de «Raya PSP»");
+  assert.ok(start < README.indexOf("\n## Raya Connect\n"), "va antes de «Raya Connect»");
+  const section = readmeSection("Facturador");
+  for (const text of [
+    "https://raya.cash/api/invoices",
+    "[Negocios › Facturador](https://raya.cash/dashboard/invoicing)",
+    // Solo en tu cuenta real.
+    "`SANDBOX_NOT_SUPPORTED`",
+    '`code === "FACTURADOR_NOT_READY"`',
+    "`error.data.reason`",
+    '`code === "INVOICE_NOT_FOUND"`',
+    "`202`",
+    "existe desde la 1.4.0",
+    "examples/emitir-facturas.mjs",
+  ]) {
+    assert.ok(section.includes(text), text);
+  }
+  // Los motivos de FACTURADOR_NOT_READY.
+  for (const reason of [
+    "not_configured",
+    "checking",
+    "action_required",
+    "certificate_expired",
+    "disabled",
+  ]) {
+    assert.ok(section.includes(`\`${reason}\``), reason);
+  }
+  // Los 3 métodos, los estados y los 3 eventos, en sus tablas.
+  for (const method of ["create(", "retrieve(", "list("]) {
+    assert.ok(section.includes(`| \`client.invoices.${method}`), method);
+  }
+  assert.ok(section.includes("| `client.invoices.create(params, { idempotencyKey })` |"));
+  for (const status of ["pending", "issued", "rejected", "failed"]) {
+    assert.ok(section.includes(`| \`${status}\` |`), status);
+  }
+  for (const type of INVOICE_EVENT_TYPES) assert.ok(section.includes(`| \`${type}\` |`), type);
+  for (const [code, message] of INVOICE_FAILURES) {
+    assert.ok(section.includes(`| \`${code}\` | ${message} |`), code);
+  }
+});
+
+test("la sección Facturador sigue el flujo en orden", () => {
+  // Configurar en el dashboard (punto de venta, certificado y clave privada, condición frente al
+  // IVA y concepto) → crear (202 pending) → invoice.issued → retrieve → list.
+  const section = readmeSection("Facturador");
+  const flow = section.slice(section.indexOf("El flujo:"));
+  const positions = [
+    "Negocios › Facturador",
+    "el punto de venta, el certificado y la clave privada de ARCA, tu condición frente al IVA y " +
+      "el concepto",
+    "invoices.create(",
+    "invoice.issued",
+    "invoices.retrieve(",
+    "invoices.list(",
+  ].map((step) => flow.indexOf(step));
+  assert.ok(
+    positions.every((position) => position >= 0),
+    String(positions),
+  );
+  assert.deepEqual(
+    positions,
+    [...positions].sort((a, b) => a - b),
+    "el flujo está desordenado",
+  );
+  // Crear vuelve 202 con la factura pending, lleva la idempotencyKey en las opciones y el DNI como
+  // texto, con la regla de la API.
+  assert.ok(flow.includes('Vuelve `202` con `status: "pending"`'), "crear: 202 pending");
+  const start = flow.indexOf("invoices.create(");
+  const call = flow.slice(start, flow.indexOf("```", start));
+  assert.match(call, /\{ idempotencyKey: key \}/);
+  const dnis = [...call.matchAll(/dni: "([^"]*)"/g)].map((match) => match[1] ?? "");
+  assert.deepEqual(dnis, ["12345678"]);
+  for (const dni of dnis) assert.match(dni, /^[1-9][0-9]{5,7}$/);
+});
+
+test("el Facturador en «Errores», «Webhooks», «Idempotencia» y «Sandbox»", () => {
+  const errors = readmeSection("Errores");
+  for (const code of FACTURADOR_CODES) assert.ok(errors.includes(`\`${code}\``), code);
+  const webhooks = readmeSection("Webhooks");
+  for (const type of INVOICE_EVENT_TYPES) assert.ok(webhooks.includes(`\`${type}\``), type);
+  assert.ok(webhooks.includes("grupo «Facturador»"));
+  const idempotency = readmeSection("Idempotencia");
+  assert.ok(
+    idempotency.includes(
+      "**`transfers.create`, `connect.payouts.create`, `psp.transfers.create` e " +
+        "`invoices.create` exigen la `idempotencyKey`.**",
+    ),
+  );
+  const sandbox = readmeSection("Sandbox");
+  assert.ok(sandbox.includes("el Facturador (`invoices.*`)"));
+  // En TypeScript, invoices.create sin idempotencyKey no compila.
+  assert.ok(README.includes("`psp.transfers.create` e `invoices.create` sin `idempotencyKey` no"));
 });
 
 test("el README y los ejemplos: sin CDNs de terceros, el SDK de servidor viejo ni competidores", () => {

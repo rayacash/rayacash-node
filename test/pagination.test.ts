@@ -5,12 +5,14 @@ import {
   ConnectPayout,
   config,
   IdentityVerification,
+  Invoice,
   ListObject,
   PspCustomer,
   PspTransfer,
   type Transfer,
 } from "../src/index.ts";
 import {
+  invoicePage,
   PSP_CUSTOMER_ID,
   payoutPage,
   pspCustomerPage,
@@ -325,5 +327,84 @@ test("PspCustomer.list y PspTransfer.list (estilo global) también paginan", asy
       { status: "completed" },
       { status: "completed", cursor: "k2" },
     ],
+  );
+});
+
+// --- Facturador -------------------------------------------------------------------------------
+
+test("invoices.list pagina con los mismos filtros y las mismas opciones", async () => {
+  const api = new MockAPI();
+  api.add(200, invoicePage(["i1", "i2"], "k1"));
+  api.add(200, invoicePage(["i3", "i4"], "k2"));
+  api.add(200, invoicePage(["i5"], null));
+  const page = await api
+    .client()
+    .invoices.list(
+      { status: "issued", created_gte: "2026-11-01T00:00:00-03:00", limit: 2 },
+      { apiKey: OTHER_KEY },
+    );
+  const ids: string[] = [];
+  for await (const invoice of page.autoPagingIter()) {
+    assert.equal(invoice.constructor, Invoice);
+    ids.push(invoice.id);
+  }
+  assert.deepEqual(ids, ["i1", "i2", "i3", "i4", "i5"]);
+  assert.equal(api.requests.length, 3); // al llegar al final no pide otra página
+  assert.deepEqual(
+    api.requests.map((request) => request.url.pathname),
+    Array(3).fill("/v1/invoices"),
+  );
+  const filters = { status: "issued", created_gte: "2026-11-01T00:00:00-03:00", limit: "2" };
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [filters, { ...filters, cursor: "k1" }, { ...filters, cursor: "k2" }],
+  );
+  // Las opciones de la primera request también viajan en las siguientes.
+  assert.deepEqual(
+    new Set(api.requests.map((request) => request.headers.get("authorization"))),
+    new Set([`Bearer ${OTHER_KEY}`]),
+  );
+});
+
+test("invoices.list: se puede cortar el recorrido y nextPage en la última no pide nada", async () => {
+  const api = new MockAPI();
+  api.add(200, invoicePage(["i1", "i2"], "k1"));
+  api.add(200, invoicePage(["i3"], null));
+  const page = await api.client().invoices.list();
+  const ids: string[] = [];
+  for await (const invoice of page.autoPagingIter()) {
+    ids.push(invoice.id);
+    if (ids.length === 1) break;
+  }
+  assert.deepEqual(ids, ["i1"]);
+  assert.equal(api.requests.length, 1);
+  const last = await page.nextPage();
+  assert.deepEqual(
+    [...last].map((invoice) => invoice.id),
+    ["i3"],
+  );
+  const empty = await last.nextPage();
+  assert.ok(empty instanceof ListObject);
+  assert.deepEqual([...empty], []);
+  assert.equal(api.requests.length, 2);
+});
+
+test("Invoice.list (estilo global) también pagina", async () => {
+  const api = new MockAPI();
+  config.apiKey = TEST_KEY;
+  config.fetch = api.fetch;
+  api.add(200, invoicePage(["i1"], "k1"));
+  api.add(200, invoicePage(["i2"], null));
+  const ids: string[] = [];
+  const page = await Invoice.list({ status: "rejected" });
+  for await (const invoice of page.autoPagingIter()) ids.push(invoice.id);
+  assert.deepEqual(ids, ["i1", "i2"]);
+  assert.deepEqual(
+    api.requests.map((request) => Object.fromEntries(request.url.searchParams)),
+    [{ status: "rejected" }, { status: "rejected", cursor: "k1" }],
+  );
+  assert.deepEqual(
+    new Set(api.requests.map((request) => request.headers.get("authorization"))),
+    new Set([`Bearer ${TEST_KEY}`]),
   );
 });

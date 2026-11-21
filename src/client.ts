@@ -5,6 +5,7 @@ import { warnDeprecated } from "./deprecated.ts";
 import { checkParams, encodeQuery, isPlainObject, typeName } from "./encoding.ts";
 import type { Event } from "./event.ts";
 import { IdentityService } from "./identityService.ts";
+import { InvoiceService } from "./invoiceService.ts";
 import { ListObject, setRetrieveContext } from "./listObject.ts";
 import { OAuthService } from "./oauthService.ts";
 import { PaymentService } from "./paymentService.ts";
@@ -161,6 +162,9 @@ function splitArguments(
  * Con Raya PSP (solo cuentas de empresa con Raya PSP activado), `client.psp` crea
  * clientes con un CVU a su nombre y transfiere en su nombre, con tu clave secreta.
  *
+ * Con el Facturador, `client.invoices` emite facturas electrónicas de ARCA a tus clientes, con tu
+ * punto de venta y tu certificado, y con tu clave secreta.
+ *
  * En un sandbox, el cliente va con su clave secreta de prueba (`raya_sk_test_…`) y la misma
  * `apiBase`: la clave decide el entorno. `client.testHelpers` solo funciona ahí (con una clave
  * real, la API responde `SANDBOX_ONLY`).
@@ -190,6 +194,11 @@ export class RayaClient {
    * obligado, con Raya PSP activado.
    */
   readonly psp: PspService;
+  /**
+   * Facturador: `invoices`, para emitir facturas electrónicas de ARCA con tu punto de venta y tu
+   * certificado (con tu clave secreta y solo en tu cuenta real).
+   */
+  readonly invoices: InvoiceService;
   /**
    * Lo que solo existe en un sandbox, con su clave secreta de prueba (`raya_sk_test_…`):
    * `testHelpers.payments.simulateTransfer`, para simular la transferencia de un pago de prueba.
@@ -243,6 +252,7 @@ export class RayaClient {
     this.connect = new ConnectService(this.#requestor);
     this.identity = new IdentityService(this.#requestor);
     this.psp = new PspService(this.#requestor);
+    this.invoices = new InvoiceService(this.#requestor);
     this.testHelpers = new SandboxHelpersService(this.#requestor);
   }
 

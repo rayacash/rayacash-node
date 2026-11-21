@@ -7,6 +7,7 @@ import "./connectPayout.ts";
 import "./event.ts";
 import "./identityVerification.ts";
 import "./identityVerificationFiles.ts";
+import "./invoice.ts";
 import "./listObject.ts";
 import "./oauthToken.ts";
 import "./payment.ts";
