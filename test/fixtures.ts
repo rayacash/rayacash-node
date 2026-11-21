@@ -820,3 +820,130 @@ export const EVENT_PSP_DOCUMENT_REQUEST_CREATED = {
   livemode: true,
   data: { object: PSP_DOCUMENT_REQUEST },
 };
+
+// El Facturador (los datos de ejemplo de raya.cash/api/invoices, sintéticos): una Factura B de 15000
+// a un consumidor final con DNI 12345678, desde el punto de venta 5. El neto es el total / 1,21
+// redondeado al centavo (al par) y el IVA, lo que falta para el total, como lo calcula la API. El
+// CAE y los mensajes de ARCA son inventados.
+export const INVOICE_ID = "inv_4Rt8Wq2Zm6Xk0Np3Hj7Lc1Vb";
+export const INVOICE_REJECTED_ID = "inv_9Kd3Xv7Bn1Qw5Ty8Mc2Hf6Rp";
+export const INVOICE_FAILED_ID = "inv_2Hs6Lm0Ta4Ye8Wk1Zq5Nd9Gc";
+export const INVOICE_TYPE_C_ID = "inv_7Vb1Pq5Jr9Cx3Fm6Ks0Wt4Ly";
+export const INVOICE_DNI = "12345678";
+export const INVOICE_CAE = "76543210987654";
+
+// Recién creada: 202, mientras la emitimos (sin número ni CAE todavía).
+export const INVOICE_PENDING = {
+  id: INVOICE_ID,
+  object: "invoice",
+  type: "B",
+  status: "pending",
+  amount: 15000,
+  net_amount: 12396.69,
+  vat_amount: 2603.31,
+  currency: "ARS",
+  dni: INVOICE_DNI,
+  point_of_sale: 5,
+  number: null,
+  concept: "products",
+  cae: null,
+  cae_expires_on: null,
+  issued_on: null,
+  failure_reason: null,
+  arca_messages: [],
+  metadata: { pedido_id: "1042" },
+  issued_at: null,
+  created_at: "2026-11-18T14:30:05Z",
+};
+
+// ARCA la autorizó: con su número, su CAE, el vencimiento del CAE y la fecha del comprobante.
+export const INVOICE_ISSUED = {
+  ...INVOICE_PENDING,
+  status: "issued",
+  number: 1234,
+  cae: INVOICE_CAE,
+  cae_expires_on: "2026-11-28",
+  issued_on: "2026-11-18",
+  issued_at: "2026-11-18T14:30:09Z",
+};
+
+// ARCA la rechazó (un rechazo del detalle): el motivo y las observaciones de ARCA, tal como llegan.
+export const INVOICE_REJECTED = {
+  ...INVOICE_PENDING,
+  id: INVOICE_REJECTED_ID,
+  status: "rejected",
+  failure_reason: {
+    code: "arca_rejected",
+    message: "ARCA rechazó la factura: arca_messages dice por qué.",
+  },
+  arca_messages: [
+    {
+      type: "observation",
+      code: 10063,
+      message: "Mensaje de ejemplo de ARCA: el documento del receptor no es válido.",
+    },
+  ],
+  created_at: "2026-11-18T15:02:41Z",
+};
+
+// No la pudimos emitir y no quedó registrada en ARCA.
+export const INVOICE_FAILED = {
+  ...INVOICE_PENDING,
+  id: INVOICE_FAILED_ID,
+  status: "failed",
+  failure_reason: {
+    code: "not_issued",
+    message: "No pudimos emitirla y no quedó registrada en ARCA. Creala de nuevo.",
+  },
+  created_at: "2026-11-17T09:12:30Z",
+};
+
+// Una Factura C (Monotributo): sin IVA, con el neto igual al total, y de servicios.
+export const INVOICE_TYPE_C_ISSUED = {
+  ...INVOICE_ISSUED,
+  id: INVOICE_TYPE_C_ID,
+  type: "C",
+  net_amount: 15000,
+  vat_amount: null,
+  number: 87,
+  concept: "services",
+  cae: "76543210987655",
+  arca_messages: [
+    {
+      type: "observation",
+      code: 10217,
+      message: "Mensaje de ejemplo de ARCA: una observación que no impide la emisión.",
+    },
+  ],
+};
+
+export const INVOICE_NEXT_CURSOR =
+  "MjAyNi0xMS0xOFQxNDozMDowNVp8aW52XzRSdDhXcTJabTZYazBOcDNIajdMYzFWYg";
+
+export const INVOICE_LIST = {
+  object: "list",
+  data: [INVOICE_REJECTED, INVOICE_ISSUED],
+  has_more: true,
+  next_cursor: INVOICE_NEXT_CURSOR,
+};
+
+export function invoicePage(ids: string[], nextCursor: string | null): Record<string, unknown> {
+  return {
+    object: "list",
+    data: ids.map((id) => ({ ...INVOICE_ISSUED, id })),
+    has_more: nextCursor !== null,
+    next_cursor: nextCursor,
+  };
+}
+
+// Los eventos traen la factura como estaba en ese momento, con livemode en true: el Facturador no
+// está en el sandbox.
+export const EVENT_INVOICE_ISSUED = {
+  id: "evt_6pR3wK9xN2cV7mT1qZ5bL8jH",
+  object: "event",
+  type: "invoice.issued",
+  api_version: "2026-10-23",
+  created_at: "2026-11-18T14:30:09Z",
+  livemode: true,
+  data: { object: INVOICE_ISSUED },
+};

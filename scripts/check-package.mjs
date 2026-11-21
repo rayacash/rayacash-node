@@ -13,9 +13,9 @@ const KEY = "raya_sk_live_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL";
 
 // Lo que exporta el paquete en runtime: lo de la 1.1.0 (Checkout es el alias deprecado de
 // ConnectOrder, hasta la 2.0.0) más ConnectOrder, ConnectPayout, IdentityVerification e
-// IdentityVerificationFiles (1.2.0) y las clases de Raya PSP: PspBalance, PspCustomer,
-// PspCustomerBalance, PspDocumentRequest y PspTransfer (1.3.0). Sacar un nombre rompe el código de
-// alguien.
+// IdentityVerificationFiles (1.2.0), las clases de Raya PSP: PspBalance, PspCustomer,
+// PspCustomerBalance, PspDocumentRequest y PspTransfer (1.3.0), e Invoice, del Facturador (1.4.0).
+// Sacar un nombre rompe el código de alguien.
 const NAMES = [
   "APIConnectionError",
   "APIError",
@@ -31,6 +31,7 @@ const NAMES = [
   "IdentityVerification",
   "IdentityVerificationFiles",
   "InvalidRequestError",
+  "Invoice",
   "ListObject",
   "NotFoundError",
   "OAuth",
@@ -104,6 +105,21 @@ async function pspFetch(url, init) {
   });
 }
 
+// Facturador: client.invoices llega a dist, crear manda el body en el orden de la API con la
+// idempotencyKey obligatoria, y la respuesta (202) se hidrata como Invoice.
+/** @param {string} url @param {RequestInit} init */
+async function invoiceFetch(url, init) {
+  assert.equal(url, "https://api.raya.cash/v1/invoices");
+  assert.equal(init.method, "POST");
+  assert.equal(init.body, '{"dni":"12345678","amount":15000}');
+  assert.equal(new Headers(init.headers).get("idempotency-key"), "factura-check");
+  const invoice = { id: "inv_check", object: "invoice", status: "pending" };
+  return new Response(JSON.stringify(invoice), {
+    status: 202,
+    headers: { "Raya-Request-Id": "req_check_invoice" },
+  });
+}
+
 // Por el nombre del paquete (self-reference), como lo cargaría quien lo instala.
 const esm = await import("rayacash");
 const cjs = require("rayacash");
@@ -130,6 +146,14 @@ for (const [format, sdk] of Object.entries({ esm, cjs: /** @type {typeof esm} */
   const customer = await psp.customers.block("pspc_check");
   assert.ok(customer instanceof sdk.PspCustomer, `${format}: PspCustomer`);
   assert.equal(customer.lastResponse?.requestId, "req_check_psp");
+  const invoices = new sdk.RayaClient(KEY, { fetch: invoiceFetch }).invoices;
+  const invoice = await invoices.create(
+    { dni: "12345678", amount: 15000 },
+    { idempotencyKey: "factura-check" },
+  );
+  assert.ok(invoice instanceof sdk.Invoice, `${format}: Invoice`);
+  assert.equal(invoice.lastResponse?.httpStatus, 202);
+  assert.equal(invoice.lastResponse?.requestId, "req_check_invoice");
   // Los alias de la 1.1.0 son los mismos objetos que los de Raya Connect; client.checkout avisa
   // una vez (cada formato es una copia, con sus propios avisos).
   assert.equal(sdk.Checkout, sdk.ConnectOrder, `${format}: Checkout`);

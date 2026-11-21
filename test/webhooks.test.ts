@@ -5,6 +5,7 @@ import {
   Event,
   type EventType,
   IdentityVerification,
+  Invoice,
   Payment,
   PspCustomer,
   PspDocumentRequest,
@@ -16,10 +17,14 @@ import {
 } from "../src/index.ts";
 import { timing } from "../src/retry.ts";
 import {
+  EVENT_INVOICE_ISSUED,
   EVENT_PAYMENT_SUCCEEDED,
   EVENT_PSP_TRANSFER_RECEIVED,
   EVENT_SANDBOX_PAYMENT_SUCCEEDED,
   EVENT_VERIFICATION_VERIFIED,
+  INVOICE_FAILED,
+  INVOICE_ISSUED,
+  INVOICE_REJECTED,
   PSP_CUSTOMER_ACTIVE,
   PSP_CUSTOMER_BLOCKED,
   PSP_CUSTOMER_CLOSED,
@@ -429,6 +434,56 @@ for (const [type, object, cls] of PSP_EVENTS) {
     assert.equal(event.type, type);
     assert.equal(event.data.object.constructor, cls);
     assert.equal(event.data.object.object, object.object);
+    assert.deepEqual(JSON.parse(JSON.stringify(event.data.object)), object);
+  });
+}
+
+// --- Facturador -------------------------------------------------------------------------------
+
+test("constructEvent con invoice.issued: una Invoice, con su número y su CAE", () => {
+  const body = Buffer.from(JSON.stringify(EVENT_INVOICE_ISSUED));
+  const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+  const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+  assert.equal(event.constructor, Event);
+  assert.equal(event.type, "invoice.issued");
+  assert.equal(event.livemode, true);
+  const invoice = event.data.object;
+  assert.ok(invoice instanceof Invoice);
+  assert.equal(invoice.status, "issued");
+  assert.equal(invoice.number, 1234);
+  assert.equal(invoice.cae, INVOICE_ISSUED.cae);
+  assert.equal(invoice.issued_on, "2026-11-18");
+  assert.deepEqual(JSON.parse(JSON.stringify(event)), EVENT_INVOICE_ISSUED);
+});
+
+// Los 3 del Facturador (webhooks/events.py de la API, grupo «Facturador», antes de los de Raya
+// PSP), con la factura como quedó.
+const INVOICE_EVENTS: Array<[EventType, Record<string, unknown>]> = [
+  ["invoice.issued", INVOICE_ISSUED],
+  ["invoice.rejected", INVOICE_REJECTED],
+  ["invoice.failed", INVOICE_FAILED],
+];
+
+test("los 3 tipos del Facturador", () => {
+  assert.equal(INVOICE_EVENTS.length, 3);
+  assert.deepEqual(
+    INVOICE_EVENTS.map(([type, object]) => [type.split(".")[1], object.status]),
+    [
+      ["issued", "issued"],
+      ["rejected", "rejected"],
+      ["failed", "failed"],
+    ],
+  );
+});
+
+for (const [type, object] of INVOICE_EVENTS) {
+  test(`constructEvent con ${type}: data.object es Invoice`, () => {
+    const body = JSON.stringify({ ...EVENT_INVOICE_ISSUED, type, data: { object } });
+    const header = WebhookSignature.generateHeader(body, WEBHOOK_SECRET);
+    const event = Webhook.constructEvent(body, header, WEBHOOK_SECRET);
+    assert.equal(event.type, type);
+    assert.equal(event.data.object.constructor, Invoice);
+    assert.equal(event.data.object.object, "invoice");
     assert.deepEqual(JSON.parse(JSON.stringify(event.data.object)), object);
   });
 }

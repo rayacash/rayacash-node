@@ -21,15 +21,18 @@ import { isolate } from "./helpers.ts";
 
 isolate();
 
-// Los 58 códigos del contrato (api.md › Códigos de error, los mismos que fija
-// publicapi/tests_catalog.py de la API), con los 3 del sandbox: SANDBOX_NOT_SUPPORTED (una
-// credencial de prueba en un endpoint que todavía no está disponible en el sandbox, como Identidad
-// o Raya PSP), SANDBOX_ONLY (una credencial real en /v1/test/*) y PAYMENT_NOT_PENDING (simular la
+// Los 60 códigos del contrato (api.md › Códigos de error), en el orden de
+// publicapi/tests_catalog.py de la API, con los 3 del sandbox: SANDBOX_NOT_SUPPORTED (una
+// credencial de prueba en un endpoint que todavía no está disponible en el sandbox, como Identidad,
+// Raya PSP o el Facturador) y SANDBOX_ONLY (una credencial real en /v1/test/*), después de
+// APP_DISABLED y antes de PAYOUT_ORIGIN_UNAVAILABLE, y PAYMENT_NOT_PENDING (simular la
 // transferencia de un pago que ya no está pendiente), e IDENTITY_NOT_ACTIVATED (crear una
-// verificación sin Identidad activada), al final de los 403. Los 7 de Raya PSP van al final de su
-// bloque de HTTP, como en la API: PSP_NOT_ACTIVATED (403), CUSTOMER_NOT_FOUND (404),
-// CUSTOMER_ALREADY_EXISTS y CUSTOMER_STATUS_CONFLICT (409), y CUSTOMER_INSUFFICIENT_BALANCE,
-// CUSTOMER_DATA_MISMATCH y TAX_ID_NOT_REGISTERED (422).
+// verificación sin Identidad activada). Los 7 de Raya PSP van al final de su bloque de HTTP, como
+// en la API: PSP_NOT_ACTIVATED (403), CUSTOMER_NOT_FOUND (404), CUSTOMER_ALREADY_EXISTS y
+// CUSTOMER_STATUS_CONFLICT (409), y CUSTOMER_INSUFFICIENT_BALANCE, CUSTOMER_DATA_MISMATCH y
+// TAX_ID_NOT_REGISTERED (422). Los 2 del Facturador van justo después de los de Raya PSP de su
+// HTTP: FACTURADOR_NOT_READY (403, con el motivo en data.reason) después de PSP_NOT_ACTIVATED, e
+// INVOICE_NOT_FOUND (404) después de CUSTOMER_NOT_FOUND.
 const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["INVALID_JSON", 400, InvalidRequestError],
   ["PARAMETER_MISSING", 400, InvalidRequestError],
@@ -52,11 +55,12 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["CONNECTED_ACCOUNT_LOCKED", 403, PermissionDeniedError],
   ["CONNECTED_ACCOUNT_NOT_CONFIGURED", 403, PermissionDeniedError],
   ["APP_DISABLED", 403, PermissionDeniedError],
-  ["PAYOUT_ORIGIN_UNAVAILABLE", 403, PermissionDeniedError],
   ["SANDBOX_NOT_SUPPORTED", 403, PermissionDeniedError],
   ["SANDBOX_ONLY", 403, PermissionDeniedError],
+  ["PAYOUT_ORIGIN_UNAVAILABLE", 403, PermissionDeniedError],
   ["IDENTITY_NOT_ACTIVATED", 403, PermissionDeniedError],
   ["PSP_NOT_ACTIVATED", 403, PermissionDeniedError],
+  ["FACTURADOR_NOT_READY", 403, PermissionDeniedError],
   ["TRANSFER_NOT_FOUND", 404, NotFoundError],
   ["PAYMENT_NOT_FOUND", 404, NotFoundError],
   ["NOT_FOUND", 404, NotFoundError],
@@ -65,6 +69,7 @@ const CATALOG: Array<[string, number, typeof RayaError]> = [
   ["PAYOUT_NOT_FOUND", 404, NotFoundError],
   ["VERIFICATION_NOT_FOUND", 404, NotFoundError],
   ["CUSTOMER_NOT_FOUND", 404, NotFoundError],
+  ["INVOICE_NOT_FOUND", 404, NotFoundError],
   ["METHOD_NOT_ALLOWED", 405, InvalidRequestError],
   ["IDEMPOTENCY_KEY_REUSED", 409, IdempotencyError],
   ["IDEMPOTENCY_KEY_IN_USE", 409, IdempotencyError],
@@ -105,9 +110,42 @@ function makeError(
   });
 }
 
-test("el catálogo tiene los 58 códigos", () => {
-  assert.equal(CATALOG.length, 58);
-  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 58);
+test("el catálogo tiene los 60 códigos", () => {
+  assert.equal(CATALOG.length, 60);
+  assert.equal(new Set(CATALOG.map(([code]) => code)).size, 60);
+});
+
+// Un código nuevo se suma en la posición de publicapi/tests_catalog.py: los tramos que más se
+// tocaron (los 403 desde APP_DISABLED y los 404) van enteros, y los status nunca bajan.
+test("el catálogo va en el orden de la API", () => {
+  const codes = CATALOG.map(([code]) => code);
+  const run = (first: string, length: number) =>
+    codes.slice(codes.indexOf(first), codes.indexOf(first) + length);
+  assert.deepEqual(run("APP_DISABLED", 7), [
+    "APP_DISABLED",
+    "SANDBOX_NOT_SUPPORTED",
+    "SANDBOX_ONLY",
+    "PAYOUT_ORIGIN_UNAVAILABLE",
+    "IDENTITY_NOT_ACTIVATED",
+    "PSP_NOT_ACTIVATED",
+    "FACTURADOR_NOT_READY",
+  ]);
+  assert.deepEqual(run("TRANSFER_NOT_FOUND", 9), [
+    "TRANSFER_NOT_FOUND",
+    "PAYMENT_NOT_FOUND",
+    "NOT_FOUND",
+    "USER_NOT_FOUND",
+    "ORDER_NOT_FOUND",
+    "PAYOUT_NOT_FOUND",
+    "VERIFICATION_NOT_FOUND",
+    "CUSTOMER_NOT_FOUND",
+    "INVOICE_NOT_FOUND",
+  ]);
+  const statuses = CATALOG.map(([, status]) => status);
+  assert.deepEqual(
+    statuses,
+    [...statuses].sort((a, b) => a - b),
+  );
 });
 
 // Los 7 de Raya PSP con el mensaje textual de publicapi/errors.py de la API y la data que manda
@@ -171,7 +209,38 @@ test("los 7 de Raya PSP están en el catálogo, con el mismo HTTP", () => {
   }
 });
 
-for (const [code, status, ErrorType, message, data] of PSP_ERRORS) {
+// Los 2 del Facturador, con el mensaje textual de la API y la data que manda cada uno:
+// FACTURADOR_NOT_READY trae el motivo en data.reason.
+const FACTURADOR_NOT_READY_MESSAGE =
+  "El Facturador todavía no está listo para emitir facturas. Configuralo o mirá su estado en " +
+  "Negocios › Facturador.";
+const FACTURADOR_ERRORS: Array<
+  [string, number, typeof RayaError, string, Record<string, unknown> | null]
+> = [
+  [
+    "FACTURADOR_NOT_READY",
+    403,
+    PermissionDeniedError,
+    FACTURADOR_NOT_READY_MESSAGE,
+    { reason: "not_configured" },
+  ],
+  ["INVOICE_NOT_FOUND", 404, NotFoundError, "No encontramos esa factura.", null],
+];
+
+test("los 2 del Facturador están en el catálogo, con el mismo HTTP y en el lugar de la API", () => {
+  assert.equal(FACTURADOR_ERRORS.length, 2);
+  for (const [code, status, ErrorType] of FACTURADOR_ERRORS) {
+    assert.ok(
+      CATALOG.some(([c, s, t]) => c === code && s === status && t === ErrorType),
+      code,
+    );
+  }
+  const codes = CATALOG.map(([code]) => code);
+  assert.equal(codes.indexOf("FACTURADOR_NOT_READY"), codes.indexOf("PSP_NOT_ACTIVATED") + 1);
+  assert.equal(codes.indexOf("INVOICE_NOT_FOUND"), codes.indexOf("CUSTOMER_NOT_FOUND") + 1);
+});
+
+for (const [code, status, ErrorType, message, data] of [...PSP_ERRORS, ...FACTURADOR_ERRORS]) {
   test(`${code}: ${ErrorType.name}, con su mensaje y su data`, () => {
     const body = { error: { code, message, data } };
     const error = makeError(status, body, {}, "key-psp");
@@ -307,6 +376,30 @@ test("SANDBOX_ONLY y SANDBOX_NOT_SUPPORTED son PermissionDeniedError, sin data",
   assert.equal(notSupported.constructor, PermissionDeniedError);
   assert.equal(notSupported.code, "SANDBOX_NOT_SUPPORTED");
 });
+
+// Por qué el Facturador todavía no puede emitir: el motivo viene en data.reason.
+for (const reason of [
+  "not_configured",
+  "checking",
+  "action_required",
+  "certificate_expired",
+  "disabled",
+]) {
+  test(`FACTURADOR_NOT_READY con data.reason ${reason}: PermissionDeniedError, sin param`, () => {
+    const error = makeError(403, {
+      error: {
+        code: "FACTURADOR_NOT_READY",
+        message: FACTURADOR_NOT_READY_MESSAGE,
+        data: { reason },
+      },
+    });
+    assert.equal(error.constructor, PermissionDeniedError);
+    assert.equal(error.code, "FACTURADOR_NOT_READY");
+    assert.deepEqual(error.data, { reason });
+    assert.equal(error.retryAfter, null);
+    assert.equal("param" in error, false); // param es de InvalidRequestError
+  });
+}
 
 test("VERIFICATION_NOT_CANCELABLE lleva el estado de la verificación en data", () => {
   const error = makeError(409, {

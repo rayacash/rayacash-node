@@ -33,6 +33,7 @@ import {
   ConnectOrder as GlobalConnectOrder,
   ConnectPayout as GlobalConnectPayout,
   IdentityVerification as GlobalIdentityVerification,
+  Invoice as GlobalInvoice,
   OAuth as GlobalOAuth,
   Payment as GlobalPayment,
   PspBalance as GlobalPspBalance,
@@ -52,6 +53,15 @@ import {
   type IdentityVerificationStatus,
   type IdentityVerificationType,
   type InvalidRequestError,
+  type Invoice,
+  type InvoiceConcept,
+  type InvoiceCreateOptions,
+  type InvoiceCreateParams,
+  type InvoiceFailureCode,
+  type InvoiceListParams,
+  type InvoiceService,
+  type InvoiceStatus,
+  type InvoiceType,
   type ListObject,
   type OAuthToken,
   type OAuthTokenOptions,
@@ -508,6 +518,80 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   check<PspDocumentRequestStatus>().is<"open" | "submitted" | "closed">();
   check<PspDocumentRequest["submitted_at"]>().is<string | null>();
 
+  // Facturador: con tu clave secreta, solo en tu cuenta real.
+  check(client.invoices).is<InvoiceService>();
+  check<InvoiceCreateParams["dni"]>().is<string>();
+  check<InvoiceCreateParams["metadata"]>().is<Record<string, string> | null | undefined>();
+  check<InvoiceCreateOptions["idempotencyKey"]>().is<string>();
+  const invoiceParams: InvoiceCreateParams = {
+    dni: "12345678",
+    amount: "15000.50",
+    metadata: { pedido_id: "1042" },
+  };
+  const invoiceOptions: InvoiceCreateOptions = { idempotencyKey: "k", timeout: 5_000 };
+  const invoice = await client.invoices.create(invoiceParams, invoiceOptions);
+  check(invoice).is<Invoice>();
+  check(invoice.lastResponse).is<RayaResponse | null>();
+  check(invoice.id).is<string>();
+  check(invoice.object).is<"invoice">();
+  check(invoice.type).is<InvoiceType>();
+  check<InvoiceType>().is<"B" | "C">();
+  check(invoice.status).is<InvoiceStatus>();
+  check<InvoiceStatus>().is<"pending" | "issued" | "rejected" | "failed">();
+  check(invoice.amount).is<number>();
+  check(invoice.net_amount).is<number>();
+  check(invoice.vat_amount).is<number | null>();
+  check(invoice.currency).is<"ARS">();
+  check(invoice.dni).is<string>();
+  check(invoice.point_of_sale).is<number>();
+  check(invoice.number).is<number | null>();
+  check(invoice.concept).is<InvoiceConcept>();
+  check<InvoiceConcept>().is<"products" | "services" | "products_and_services">();
+  check(invoice.cae).is<string | null>();
+  check(invoice.cae_expires_on).is<string | null>();
+  check(invoice.issued_on).is<string | null>();
+  check(invoice.failure_reason).is<Invoice.FailureReason | null>();
+  check(invoice.failure_reason?.code).is<InvoiceFailureCode>();
+  check(invoice.failure_reason?.message).is<string>();
+  check<InvoiceFailureCode>().is<
+    | "arca_rejected"
+    | "facturador_not_ready"
+    | "not_issued"
+    | "numbering_conflict"
+    | "account_unavailable"
+  >();
+  check(invoice.arca_messages).is<Invoice.ArcaMessage[]>();
+  check<Invoice.ArcaMessage["type"]>().is<"error" | "observation">();
+  check<Invoice.ArcaMessage["code"]>().is<number>();
+  check<Invoice.ArcaMessage["message"]>().is<string>();
+  check(invoice.metadata).is<Record<string, string>>();
+  check(invoice.issued_at).is<string | null>();
+  check(invoice.created_at).is<string>();
+  check(
+    await client.invoices.create({ dni: "12345678", amount: 15000 }, { idempotencyKey: "k" }),
+  ).is<Invoice>();
+  check(
+    await client.invoices.create(
+      { dni: "12345678", amount: 15000n, metadata: null },
+      { idempotencyKey: "k", maxNetworkRetries: 0 },
+    ),
+  ).is<Invoice>();
+  check(await client.invoices.retrieve("inv_x")).is<Invoice>();
+  check(await client.invoices.retrieve("inv_x", { timeout: 5_000 })).is<Invoice>();
+  const invoiceFilters: InvoiceListParams = {
+    status: "issued",
+    created_gte: new Date(),
+    created_lt: "2026-12-01T00:00:00-03:00",
+    limit: 100,
+    cursor: "c1",
+  };
+  const invoices = await client.invoices.list(invoiceFilters);
+  check(invoices).is<ListObject<Invoice>>();
+  for (const item of invoices) check(item).is<Invoice>();
+  for await (const item of invoices.autoPagingIter()) check(item).is<Invoice>();
+  check(await invoices.nextPage()).is<ListObject<Invoice>>();
+  check(await client.invoices.list()).is<ListObject<Invoice>>();
+
   // Sandbox: con la clave secreta de prueba.
   check(client.testHelpers).is<SandboxHelpersService>();
   check(client.testHelpers.payments).is<SandboxPaymentHelpersService>();
@@ -537,6 +621,7 @@ export async function clientStyle(client: RayaClient): Promise<void> {
     | Payment
     | ConnectOrder
     | IdentityVerification
+    | Invoice
     | PspCustomer
     | PspTransfer
     | PspDocumentRequest
@@ -562,8 +647,12 @@ export async function clientStyle(client: RayaClient): Promise<void> {
     | "psp.document_request.created"
     | "psp.document_request.closed"
   >();
+  check<Extract<EventType, `invoice.${string}`>>().is<
+    "invoice.issued" | "invoice.rejected" | "invoice.failed"
+  >();
   const object = event.data.object;
   if (object instanceof GlobalIdentityVerification) check(object).is<IdentityVerification>();
+  if (object instanceof GlobalInvoice) check(object).is<Invoice>();
   if (object instanceof GlobalPspCustomer) check(object).is<PspCustomer>();
   if (object instanceof GlobalPspTransfer) check(object).is<PspTransfer>();
   if (object instanceof GlobalPspDocumentRequest) check(object).is<PspDocumentRequest>();
@@ -706,6 +795,36 @@ export async function clientStyle(client: RayaClient): Promise<void> {
   await client.psp.transfers.list({ external_reference: "cliente-8812" });
   // @ts-expect-error: los GET no llevan idempotencyKey.
   await client.psp.balance.retrieve({ idempotencyKey: "k" });
+  const invoiceBody = { dni: "12345678", amount: 15000 };
+  check(await client.invoices.create(invoiceBody, key)).is<Invoice>();
+  // @ts-expect-error: la idempotencyKey es obligatoria en invoices.create.
+  await client.invoices.create(invoiceBody);
+  // @ts-expect-error: la idempotencyKey es obligatoria en invoices.create.
+  await client.invoices.create(invoiceBody, { timeout: 5_000 });
+  // @ts-expect-error: dni es un string ("12345678"), no un número.
+  await client.invoices.create({ dni: 12345678, amount: 15000 }, key);
+  // @ts-expect-error: dni es obligatorio.
+  await client.invoices.create({ amount: 15000 }, key);
+  // @ts-expect-error: amount es obligatorio.
+  await client.invoices.create({ dni: "12345678" }, key);
+  // @ts-expect-error: amount no acepta booleans.
+  await client.invoices.create({ dni: "12345678", amount: true }, key);
+  // @ts-expect-error: el punto de venta sale de tu Facturador.
+  await client.invoices.create({ ...invoiceBody, point_of_sale: 5 }, key);
+  // @ts-expect-error: el tipo (B o C) sale de tu condición frente al IVA.
+  await client.invoices.create({ ...invoiceBody, type: "B" }, key);
+  // @ts-expect-error: va en las opciones, no en los parámetros.
+  await client.invoices.create({ ...invoiceBody, idempotencyKey: "k" }, key);
+  // @ts-expect-error: metadata es de string a string.
+  await client.invoices.create({ ...invoiceBody, metadata: { pedido_id: 1042 } }, key);
+  // @ts-expect-error: open no es un estado de una factura.
+  await client.invoices.list({ status: "open" });
+  // @ts-expect-error: sin filtro por DNI (sería un dato personal en la URL).
+  await client.invoices.list({ dni: "12345678" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.invoices.retrieve("inv_x", { idempotencyKey: "k" });
+  // @ts-expect-error: los GET no llevan idempotencyKey.
+  await client.invoices.list({}, { idempotencyKey: "k" });
 }
 
 export async function globalStyle(): Promise<void> {
@@ -809,6 +928,20 @@ export async function globalStyle(): Promise<void> {
   await GlobalPspTransfer.create({ customer: "pspc_x", amount: 1, destination: "x" });
   // @ts-expect-error: tampoco en el estilo global: los GET no llevan idempotencyKey.
   await GlobalPspBalance.retrieve({ idempotencyKey: "k" });
+
+  const invoice = await GlobalInvoice.create(
+    { dni: "12345678", amount: 15000, metadata: { pedido_id: "1042" } },
+    { idempotencyKey: "k" },
+  );
+  check(invoice).is<Invoice>();
+  check(await GlobalInvoice.retrieve("inv_x")).is<Invoice>();
+  check(await GlobalInvoice.list({ status: "failed" })).is<ListObject<Invoice>>();
+  check(await GlobalInvoice.list()).is<ListObject<Invoice>>();
+  check(GlobalInvoice.constructFrom({ object: "invoice" })).is<Invoice>();
+  // @ts-expect-error: tampoco en el estilo global: la idempotencyKey es obligatoria.
+  await GlobalInvoice.create({ dni: "12345678", amount: 15000 });
+  // @ts-expect-error: tampoco en el estilo global: los GET no llevan idempotencyKey.
+  await GlobalInvoice.retrieve("inv_x", { idempotencyKey: "k" });
 }
 
 // Los nombres de la 1.1.0, deprecados hasta la 2.0.0: el código escrito para la 1.1.0 tiene que

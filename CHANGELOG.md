@@ -2,6 +2,21 @@
 
 Los cambios de cada versión de `rayacash` publicada en [npm](https://www.npmjs.com/package/rayacash). Sigue [semver](https://semver.org/lang/es/): los cambios incompatibles solo llegan en una versión mayor (`2.0.0`), y los anotamos acá.
 
+## 1.4.0
+
+Facturador: emití facturas electrónicas de ARCA (Factura B o C) a tus clientes con su DNI y el total, con tu punto de venta y tu certificado. Se configura en Negocios › Facturador y funciona solo en tu cuenta real.
+
+- `client.invoices.create({ dni, amount, metadata }, { idempotencyKey })` (`POST /v1/invoices`) crea una factura a un consumidor final, con la `idempotencyKey` obligatoria, como en `transfers.create`: sin ella, `TypeError` sin mandar nada. El body viaja en el orden de la API: `dni`, `amount` y `metadata`. `dni` va como texto; `amount` es el total (en una Factura B, con el IVA incluido y desde `0.03`) y acepta lo mismo que en `transfers.create`. El tipo (B o C), el punto de venta y el concepto salen de la configuración de tu Facturador. Vuelve `202` con la factura `pending` (el status HTTP queda en `invoice.lastResponse.httpStatus`): la emitimos en segundo plano y el resultado llega por webhook o con `retrieve`.
+- `client.invoices.retrieve(invoiceId)` (`GET /v1/invoices/:id`) y `client.invoices.list({ status, created_gte, created_lt, limit, cursor })` (`GET /v1/invoices`, con `autoPagingIter()`; sin filtro por DNI, que iría en la URL).
+- En el estilo global: `Invoice.create/retrieve/list(…)`.
+- Clase nueva, registrada por su `object`: `Invoice` (`invoice`, 20 claves), con `type` (`B` o `C`), `status` (`pending`, `issued`, `rejected` o `failed`), `amount`, `net_amount` y `vat_amount` (`null` en una Factura C), `dni`, `point_of_sale`, `number`, `concept`, `cae`, `cae_expires_on`, `issued_on`, `failure_reason` (`Invoice.FailureReason`), `arca_messages` (`Invoice.ArcaMessage`), `metadata` (queda como objeto común), `issued_at` y `created_at`.
+- Sin mandar nada fallan un parámetro desconocido (también `type`, `point_of_sale` y `concept`, que salen de tu Facturador), un `dni` que no es un string (con el texto de la API: «dni tiene que ser un DNI de 6 a 8 dígitos, como texto (por ejemplo, "12345678").»), un monto inválido, una `metadata` que no es un objeto y un id vacío, `"."` o `".."`. El formato del DNI y el rango del monto los valida la API.
+- `EventType` suma `invoice.issued`, `invoice.rejected` e `invoice.failed`, y `event.data.object` puede ser una `Invoice`.
+- Errores: el catálogo pasa de 58 a 60 códigos, sin clases nuevas. `FACTURADOR_NOT_READY` es `PermissionDeniedError`, con el motivo en `error.data.reason` (`not_configured`, `checking`, `action_required`, `certificate_expired` o `disabled`), e `INVOICE_NOT_FOUND`, `NotFoundError`. La clase sigue saliendo del código HTTP.
+- Tipos nuevos: `InvoiceService`, `InvoiceCreateParams`, `InvoiceListParams`, `InvoiceCreateOptions`, `InvoiceType`, `InvoiceStatus`, `InvoiceConcept` e `InvoiceFailureCode`.
+- README: sección «Facturador» (el flujo: configurarlo en el dashboard, crear la factura, el webhook, leerla y listarlas; los métodos, los estados, los eventos y los motivos de `failure_reason.code`), los 2 códigos en «Errores», los 3 eventos en «Webhooks», `invoices.create` en «Idempotencia», el Facturador entre lo que no está en el «Sandbox» y el ejemplo `examples/emitir-facturas.mjs`.
+- Sin cambios incompatibles: lo de la 1.3.0 sigue igual.
+
 ## 1.3.0
 
 Raya PSP: creá clientes con un CVU a su nombre, leé su saldo, bloquealos, dales de baja el CVU o recrealo, y transferí en su nombre (solo cuentas de empresa con Raya PSP activado).

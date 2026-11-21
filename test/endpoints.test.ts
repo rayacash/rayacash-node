@@ -1,4 +1,4 @@
-// Los 33 endpoints: método, ruta, query, body y headers exactos.
+// Los 36 endpoints: método, ruta, query, body y headers exactos.
 
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -18,6 +18,7 @@ import {
   IdentityVerification,
   IdentityVerificationFiles,
   InvalidRequestError,
+  Invoice,
   ListObject,
   NotFoundError,
   OAuthToken,
@@ -42,6 +43,18 @@ import {
   CLIENT_ID,
   CLIENT_SECRET,
   EVENT_VERIFICATION_VERIFIED,
+  INVOICE_CAE,
+  INVOICE_DNI,
+  INVOICE_FAILED,
+  INVOICE_FAILED_ID,
+  INVOICE_ID,
+  INVOICE_ISSUED,
+  INVOICE_LIST,
+  INVOICE_PENDING,
+  INVOICE_REJECTED,
+  INVOICE_REJECTED_ID,
+  INVOICE_TYPE_C_ID,
+  INVOICE_TYPE_C_ISSUED,
   NOTIFICATION_URL,
   OAUTH_CODE,
   OAUTH_TOKEN,
@@ -2501,6 +2514,586 @@ test("psp.customers.create: el tope de rechazos por CUIL (429 con Retry-After la
   assert.equal(error.retryAfter, 3600);
   assert.deepEqual(error.data, { limit: "kyc_per_tax_id" });
   assert.equal(api.requests.length, 1); // más de 60 s: el SDK no espera, lanza el error
+});
+
+// --- Facturador -------------------------------------------------------------------------------
+
+const INVOICES_URL = "https://api.raya.cash/v1/invoices";
+const INVOICE_PARAMS = { dni: INVOICE_DNI, amount: 15000 };
+const INVOICE_BODY = `{"dni":"${INVOICE_DNI}","amount":15000}`;
+const INVOICE_KEY_MESSAGE =
+  "invoices.create necesita idempotencyKey: generá un UUID v4 con crypto.randomUUID(), " +
+  "guardalo con la factura antes de llamar y reusalo en cada reintento: " +
+  "invoices.create({ dni, amount }, { idempotencyKey }).";
+// El texto de la API para un dni inválido: el SDK dice lo mismo si dni no es un string.
+const DNI_MESSAGE =
+  'dni tiene que ser un DNI de 6 a 8 dígitos, como texto (por ejemplo, "12345678").';
+const NOT_READY_MESSAGE =
+  "El Facturador todavía no está listo para emitir facturas. Configuralo o mirá su estado en " +
+  "Negocios › Facturador.";
+// La regla del DNI, la misma de la API, de la base y del handler de ARCA.
+const DNI_RULE = /^[1-9][0-9]{5,7}$/;
+
+test("invoices.create: 202 pending, el body en el orden del contrato y la idempotencyKey tuya", async () => {
+  const api = new MockAPI();
+  api.add(202, INVOICE_PENDING);
+  const invoice = await api
+    .client()
+    .invoices.create(
+      { metadata: { pedido_id: "1042" }, amount: new FakeDecimal("15000.00"), dni: INVOICE_DNI },
+      { idempotencyKey: IDEMPOTENCY_KEY },
+    );
+  assert.equal(invoice.constructor, Invoice);
+  assert.equal(invoice.object, "invoice");
+  assert.equal(invoice.id, INVOICE_ID);
+  assert.equal(invoice.status, "pending");
+  assert.equal(invoice.type, "B");
+  assert.deepEqual(
+    [invoice.amount, invoice.net_amount, invoice.vat_amount],
+    [15000, 12396.69, 2603.31],
+  );
+  assert.equal(invoice.currency, "ARS");
+  assert.equal(invoice.dni, INVOICE_DNI);
+  assert.equal(invoice.point_of_sale, 5);
+  assert.equal(invoice.concept, "products");
+  // Mientras la emitimos: sin número, sin CAE y sin motivo.
+  assert.deepEqual(
+    [invoice.number, invoice.cae, invoice.cae_expires_on, invoice.issued_on, invoice.issued_at],
+    [null, null, null, null, null],
+  );
+  assert.equal(invoice.failure_reason, null);
+  assert.deepEqual(invoice.arca_messages, []);
+  assert.deepEqual(invoice.metadata, { pedido_id: "1042" });
+  // 202: la emitimos en segundo plano y avisamos con invoice.issued, .rejected o .failed.
+  assert.equal(invoice.lastResponse?.httpStatus, 202);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.href], ["POST", INVOICES_URL]);
+  // dni, amount y metadata: el orden de la API, no el de los parámetros, con el monto exacto.
+  assert.equal(
+    request.body,
+    `{"dni":"${INVOICE_DNI}","amount":15000,"metadata":{"pedido_id":"1042"}}`,
+  );
+  assert.equal(request.headers.get("content-type"), "application/json");
+  assert.equal(request.headers.get("idempotency-key"), IDEMPOTENCY_KEY);
+  assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(invoice.lastResponse?.idempotencyKey, IDEMPOTENCY_KEY);
+});
+
+for (const [amount, expected] of [
+  [15000, "15000"],
+  ["15000.50", "15000.5"],
+  [" 1210 ", "1210"],
+  [0.01, "0.01"],
+  [12100n, "12100"],
+] as const) {
+  test(`invoices.create con el monto ${JSON.stringify(String(amount))}`, async () => {
+    const api = new MockAPI();
+    api.add(202, INVOICE_PENDING);
+    await api.client().invoices.create({ dni: INVOICE_DNI, amount }, { idempotencyKey: "k" });
+    assert.equal(api.last.body, `{"dni":"${INVOICE_DNI}","amount":${expected}}`);
+  });
+}
+
+test("invoices.create manda solo lo que pasás: sin metadata, solo dni y amount", async () => {
+  const api = new MockAPI();
+  api.add(202, INVOICE_PENDING);
+  api.add(202, INVOICE_PENDING);
+  const invoices = api.client().invoices;
+  await invoices.create({ ...INVOICE_PARAMS, metadata: null }, { idempotencyKey: "f-1" });
+  assert.equal(api.last.body, INVOICE_BODY);
+  await invoices.create({ ...INVOICE_PARAMS, metadata: undefined }, { idempotencyKey: "f-2" });
+  assert.equal(api.last.body, INVOICE_BODY);
+  assert.deepEqual(
+    api.requests.map((request) => request.headers.get("idempotency-key")),
+    ["f-1", "f-2"],
+  );
+});
+
+test("invoices.create exige la idempotencyKey y la valida antes de mandar", async () => {
+  const api = new MockAPI();
+  const invoices = api.client().invoices;
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = invoices as any;
+  let error = await rejection(untyped.create(INVOICE_PARAMS));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, INVOICE_KEY_MESSAGE);
+  error = await rejection(untyped.create(INVOICE_PARAMS, {}));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, INVOICE_KEY_MESSAGE);
+  error = await rejection(untyped.create(INVOICE_PARAMS, { idempotencyKey: null }));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, INVOICE_KEY_MESSAGE);
+  error = await rejection(untyped.create(INVOICE_PARAMS, { timeout: 5_000 }));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, INVOICE_KEY_MESSAGE);
+  error = await rejection(untyped.create(INVOICE_PARAMS, { idempotencyKey: 123 }));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^idempotencyKey tiene que ser un string/);
+  error = await rejection(invoices.create(INVOICE_PARAMS, { idempotencyKey: "con espacios" }));
+  assert.ok(error instanceof RangeError);
+  assert.match(error.message, /^idempotencyKey tiene que tener de 1 a 255 caracteres/);
+  error = await rejection(untyped.create(INVOICE_PARAMS, { idempotency_key: "k" }));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /¿quisiste decir idempotencyKey\?/);
+  error = await rejection(untyped.create(INVOICE_PARAMS, "k"));
+  assert.ok(error instanceof TypeError);
+  assert.match(error.message, /^options tiene que ser un objeto/);
+  assert.deepEqual(api.requests, []);
+});
+
+const INVOICE_CREATE_NAMES = "dni, amount y metadata";
+
+const INVOICE_CREATE_INVALID: Array<
+  [string, unknown, typeof TypeError | typeof RangeError, string | RegExp]
+> = [
+  [
+    "params que no son un objeto",
+    INVOICE_DNI,
+    TypeError,
+    `invoices.create recibe un objeto con sus parámetros (${INVOICE_CREATE_NAMES}).`,
+  ],
+  ["sin params", undefined, TypeError, DNI_MESSAGE],
+  ["sin dni", { amount: 15000 }, TypeError, DNI_MESSAGE],
+  ["un dni numérico", { dni: 12345678, amount: 15000 }, TypeError, DNI_MESSAGE],
+  ["un dni en null", { dni: null, amount: 15000 }, TypeError, DNI_MESSAGE],
+  [
+    "un dni que es un objeto",
+    { dni: { number: INVOICE_DNI }, amount: 15000 },
+    TypeError,
+    DNI_MESSAGE,
+  ],
+  [
+    "sin amount",
+    { dni: INVOICE_DNI },
+    TypeError,
+    /^amount tiene que ser un número en pesos \(number, string decimal, bigint o un decimal/,
+  ],
+  [
+    "un amount boolean",
+    { dni: INVOICE_DNI, amount: true },
+    TypeError,
+    /^amount no puede ser un boolean/,
+  ],
+  [
+    "un amount NaN",
+    { dni: INVOICE_DNI, amount: "NaN" },
+    RangeError,
+    /^amount tiene que ser un número finito/,
+  ],
+  [
+    "un amount con coma decimal",
+    { dni: INVOICE_DNI, amount: "15000,50" },
+    RangeError,
+    'amount "15000,50" no es un número: usá punto decimal y nada más, como "1500.50".',
+  ],
+  [
+    "metadata que es un array",
+    { ...INVOICE_PARAMS, metadata: ["pedido-1042"] },
+    TypeError,
+    'metadata tiene que ser un objeto de string a string, como { pedido_id: "1042" }.',
+  ],
+  [
+    "metadata que es un string",
+    { ...INVOICE_PARAMS, metadata: "pedido_id=1042" },
+    TypeError,
+    /^metadata tiene que ser un objeto/,
+  ],
+  [
+    "type, que sale de tu condición frente al IVA",
+    { ...INVOICE_PARAMS, type: "B" },
+    TypeError,
+    `invoices.create no acepta "type": los parámetros son ${INVOICE_CREATE_NAMES}.`,
+  ],
+  [
+    "point_of_sale, que sale de tu Facturador",
+    { ...INVOICE_PARAMS, point_of_sale: 5 },
+    TypeError,
+    `invoices.create no acepta "point_of_sale": los parámetros son ${INVOICE_CREATE_NAMES}.`,
+  ],
+  [
+    "concept, que sale de tu Facturador",
+    { ...INVOICE_PARAMS, concept: "services" },
+    TypeError,
+    `invoices.create no acepta "concept": los parámetros son ${INVOICE_CREATE_NAMES}.`,
+  ],
+  [
+    "un CUIT de receptor, que la API no tiene",
+    { ...INVOICE_PARAMS, tax_id: "20123456785" },
+    TypeError,
+    `invoices.create no acepta "tax_id": los parámetros son ${INVOICE_CREATE_NAMES}.`,
+  ],
+  [
+    "external_reference, que la API no tiene",
+    { ...INVOICE_PARAMS, external_reference: "pedido-1042" },
+    TypeError,
+    `invoices.create no acepta "external_reference": los parámetros son ${INVOICE_CREATE_NAMES}.`,
+  ],
+  [
+    "la idempotencyKey entre los parámetros",
+    { ...INVOICE_PARAMS, idempotencyKey: "k" },
+    TypeError,
+    /^invoices\.create no acepta idempotencyKey entre los parámetros: .*va en las opciones/,
+  ],
+];
+
+for (const [label, params, ErrorType, message] of INVOICE_CREATE_INVALID) {
+  test(`invoices.create valida antes de mandar: ${label}`, async () => {
+    const api = new MockAPI();
+    // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+    const untyped = api.client().invoices as any;
+    const error = await rejection(untyped.create(params, { idempotencyKey: "k" }));
+    assert.equal(error.constructor, ErrorType);
+    if (typeof message === "string") assert.equal(error.message, message);
+    else assert.match(error.message, message);
+    assert.deepEqual(api.requests, []);
+  });
+}
+
+test("los parámetros se validan antes que la idempotencyKey, como en transfers.create", async () => {
+  const api = new MockAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = api.client().invoices as any;
+  const error = await rejection(untyped.create({ dni: 12345678, amount: 15000 }));
+  assert.ok(error instanceof TypeError);
+  assert.equal(error.message, DNI_MESSAGE);
+  assert.deepEqual(api.requests, []);
+});
+
+test("lo demás lo valida la API: el formato del DNI y el rango del monto llegan tal cual", async () => {
+  const api = new MockAPI();
+  const invoices = api.client().invoices;
+  api.addError(400, "PARAMETER_INVALID", DNI_MESSAGE, { field: "dni" });
+  let error = await rejection(
+    invoices.create({ dni: "1234", amount: 15000 }, { idempotencyKey: "a" }),
+  );
+  assert.ok(error instanceof InvalidRequestError);
+  assert.equal(error.code, "PARAMETER_INVALID");
+  assert.equal(error.param, "dni");
+  assert.equal(error.message, DNI_MESSAGE);
+  assert.equal(api.last.body, '{"dni":"1234","amount":15000}');
+  // Los puntos y los ceros de adelante los saca la API: el SDK no toca el dni.
+  api.add(202, INVOICE_PENDING);
+  await invoices.create({ dni: "12.345.678", amount: 15000 }, { idempotencyKey: "b" });
+  assert.equal(api.last.body, '{"dni":"12.345.678","amount":15000}');
+  // Más de 2 decimales: el SDK nunca redondea, responde la API.
+  api.addError(
+    400,
+    "PARAMETER_INVALID",
+    "amount tiene que ser un número con hasta 2 decimales (por ejemplo, 1500 o 1500.5).",
+    { field: "amount" },
+  );
+  error = await rejection(
+    invoices.create({ dni: INVOICE_DNI, amount: "15000.005" }, { idempotencyKey: "c" }),
+  );
+  assert.equal(error.param, "amount");
+  assert.equal(api.last.body, `{"dni":"${INVOICE_DNI}","amount":15000.005}`);
+  assert.equal(api.requests.length, 3); // los 4xx no se reintentan
+});
+
+test("el DNI de los ejemplos cumple la regla de la API", () => {
+  for (const fixture of [
+    INVOICE_PENDING,
+    INVOICE_ISSUED,
+    INVOICE_REJECTED,
+    INVOICE_FAILED,
+    INVOICE_TYPE_C_ISSUED,
+  ]) {
+    assert.match(fixture.dni, DNI_RULE, fixture.id);
+  }
+  for (const dni of ["012345678", "1234", "123456789", "12.345.678", "1234567a"]) {
+    assert.doesNotMatch(dni, DNI_RULE, dni);
+  }
+});
+
+test("invoices.create reintenta con la misma Idempotency-Key y el mismo body", async () => {
+  const api = new MockAPI();
+  api.failWith(networkError("ECONNRESET"));
+  api.addError(503, "TEMPORARILY_UNAVAILABLE");
+  api.add(202, INVOICE_PENDING);
+  const invoice = await api
+    .client()
+    .invoices.create(INVOICE_PARAMS, { idempotencyKey: IDEMPOTENCY_KEY });
+  assert.equal(invoice.id, INVOICE_ID);
+  assert.equal(invoice.lastResponse?.httpStatus, 202);
+  assert.equal(api.requests.length, 3);
+  for (const request of api.requests) {
+    assert.equal(request.headers.get("idempotency-key"), IDEMPOTENCY_KEY);
+    assert.equal(request.body, INVOICE_BODY);
+  }
+});
+
+const FACTURADOR_NOT_READY_REASONS = [
+  "not_configured",
+  "checking",
+  "action_required",
+  "certificate_expired",
+  "disabled",
+];
+
+test("invoices.create: FACTURADOR_NOT_READY es PermissionDeniedError, con el motivo en data.reason y sin reintentos", async () => {
+  const api = new MockAPI();
+  const invoices = api.client().invoices;
+  for (const reason of FACTURADOR_NOT_READY_REASONS) {
+    api.addError(403, "FACTURADOR_NOT_READY", NOT_READY_MESSAGE, { reason });
+    const error = await rejection(
+      invoices.create(INVOICE_PARAMS, { idempotencyKey: `factura-${reason}` }),
+    );
+    assert.ok(error instanceof PermissionDeniedError, reason);
+    assert.equal(error.code, "FACTURADOR_NOT_READY");
+    assert.equal(error.httpStatus, 403);
+    assert.equal(error.message, NOT_READY_MESSAGE);
+    assert.deepEqual(error.data, { reason });
+    assert.equal(error.idempotencyKey, `factura-${reason}`);
+    assert.equal(error.retryAfter, null);
+  }
+  assert.equal(api.requests.length, FACTURADOR_NOT_READY_REASONS.length);
+});
+
+test("invoices: el Facturador es solo de tu cuenta real (con una clave de prueba, SANDBOX_NOT_SUPPORTED)", async () => {
+  const api = new MockAPI();
+  const invoices = api.client(SANDBOX_SECRET_KEY).invoices;
+  const message = "Este endpoint todavía no está disponible en un sandbox.";
+  api.addError(403, "SANDBOX_NOT_SUPPORTED", message);
+  api.addError(403, "SANDBOX_NOT_SUPPORTED", message);
+  api.addError(403, "SANDBOX_NOT_SUPPORTED", message);
+  for (const call of [
+    () => invoices.create(INVOICE_PARAMS, { idempotencyKey: "k" }),
+    () => invoices.retrieve(INVOICE_ID),
+    () => invoices.list(),
+  ]) {
+    const error = await rejection(call());
+    assert.ok(error instanceof PermissionDeniedError);
+    assert.equal(error.code, "SANDBOX_NOT_SUPPORTED");
+  }
+  // La misma URL que en tu cuenta real: la clave decide el entorno.
+  assert.deepEqual(
+    api.requests.map((request) => [request.url.origin, request.headers.get("authorization")]),
+    Array(3).fill(["https://api.raya.cash", `Bearer ${SANDBOX_SECRET_KEY}`]),
+  );
+});
+
+test("invoices.create: el tope de facturas abiertas (429 con Retry-After: 300) no se reintenta", async () => {
+  const api = new MockAPI();
+  api.addError(
+    429,
+    "RATE_LIMITED",
+    "Hiciste demasiadas requests. Esperá unos segundos y probá de nuevo.",
+    null,
+    { headers: { "Retry-After": "300" } },
+  );
+  const error = await rejection(
+    api.client().invoices.create(INVOICE_PARAMS, { idempotencyKey: "tope-1" }),
+  );
+  assert.ok(error instanceof RateLimitError);
+  assert.equal(error.retryAfter, 300);
+  assert.equal(error.idempotencyKey, "tope-1");
+  assert.equal(api.requests.length, 1); // más de 60 s: el SDK no espera, lanza el error
+});
+
+test("invoices.retrieve", async () => {
+  const api = new MockAPI();
+  api.add(200, INVOICE_ISSUED);
+  const invoice = await api.client().invoices.retrieve(INVOICE_ID);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.href], ["GET", `${INVOICES_URL}/${INVOICE_ID}`]);
+  assert.equal(request.body, undefined);
+  assert.equal(request.headers.get("content-type"), null);
+  assert.equal(request.headers.get("idempotency-key"), null);
+  assert.equal(request.headers.get("authorization"), `Bearer ${TEST_KEY}`);
+  assert.equal(invoice.constructor, Invoice);
+  assert.equal(invoice.status, "issued");
+  assert.equal(invoice.number, 1234);
+  assert.equal(invoice.cae, INVOICE_CAE);
+  assert.equal(invoice.cae_expires_on, "2026-11-28");
+  assert.equal(invoice.issued_on, "2026-11-18");
+  assert.equal(invoice.issued_at, "2026-11-18T14:30:09Z");
+  assert.equal(invoice.failure_reason, null);
+  assert.equal(Object.getPrototypeOf(invoice.metadata), Object.prototype);
+  assert.equal(invoice.lastResponse?.httpStatus, 200);
+  assert.equal(invoice.lastResponse?.idempotencyKey, null);
+});
+
+test("invoices.retrieve: rejected y failed traen su motivo, y los mensajes de ARCA tal cual", async () => {
+  const api = new MockAPI();
+  api.add(200, INVOICE_REJECTED);
+  api.add(200, INVOICE_FAILED);
+  const rejected = await api.client().invoices.retrieve(INVOICE_REJECTED_ID);
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.failure_reason?.code, "arca_rejected");
+  assert.equal(
+    rejected.failure_reason?.message,
+    "ARCA rechazó la factura: arca_messages dice por qué.",
+  );
+  assert.equal(rejected.cae, null);
+  assert.deepEqual(rejected.arca_messages, INVOICE_REJECTED.arca_messages);
+  assert.equal(Object.getPrototypeOf(rejected.arca_messages[0]), Object.prototype);
+  const failed = await api.client().invoices.retrieve(INVOICE_FAILED_ID);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failure_reason?.code, "not_issued");
+  assert.deepEqual(failed.arca_messages, []);
+  assert.deepEqual(
+    api.requests.map((request) => request.url.pathname),
+    [`/v1/invoices/${INVOICE_REJECTED_ID}`, `/v1/invoices/${INVOICE_FAILED_ID}`],
+  );
+});
+
+test("invoices.retrieve: una Factura C no discrimina IVA", async () => {
+  const api = new MockAPI();
+  api.add(200, INVOICE_TYPE_C_ISSUED);
+  const invoice = await api.client().invoices.retrieve(INVOICE_TYPE_C_ID);
+  assert.equal(invoice.type, "C");
+  assert.equal(invoice.vat_amount, null);
+  assert.equal(invoice.net_amount, invoice.amount);
+  assert.equal(invoice.concept, "services");
+  // Una emitida también puede traer observaciones de ARCA.
+  assert.equal(invoice.status, "issued");
+  assert.equal(invoice.arca_messages[0]?.type, "observation");
+});
+
+test("invoices: los ids van codificados en la ruta y con la clave de la llamada", async () => {
+  const api = new MockAPI();
+  api.add(200, INVOICE_ISSUED);
+  await api.client().invoices.retrieve("../balance");
+  assert.equal(api.last.url.href, `${INVOICES_URL}/..%2Fbalance`);
+  api.add(200, INVOICE_ISSUED);
+  await api.client().invoices.retrieve("inv x/y?z=#w", { apiKey: OTHER_KEY });
+  assert.equal(api.last.url.pathname, "/v1/invoices/inv%20x%2Fy%3Fz%3D%23w");
+  assert.equal(api.last.url.search, "");
+  assert.equal(api.last.headers.get("authorization"), `Bearer ${OTHER_KEY}`);
+});
+
+test("invoices.retrieve rechaza los ids vacíos, «.» y «..» y los que no son string", async () => {
+  const api = new MockAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = api.client().invoices as any;
+  for (const [value, ErrorType, message] of [
+    ["", RangeError, "invoiceId no puede estar vacío."],
+    ["   ", RangeError, "invoiceId no puede estar vacío."],
+    [".", RangeError, 'invoiceId no puede ser "." ni "..".'],
+    ["..", RangeError, 'invoiceId no puede ser "." ni "..".'],
+    [42, TypeError, "invoiceId tiene que ser un string, no number."],
+    [undefined, TypeError, "invoiceId tiene que ser un string, no undefined."],
+  ] as const) {
+    const error = await rejection(untyped.retrieve(value));
+    assert.equal(error.constructor, ErrorType);
+    assert.equal(error.message, message);
+  }
+  assert.deepEqual(api.requests, []);
+});
+
+test("invoices.retrieve: INVOICE_NOT_FOUND es NotFoundError y no se reintenta", async () => {
+  const api = new MockAPI();
+  api.addError(404, "INVOICE_NOT_FOUND", "No encontramos esa factura.");
+  const error = await rejection(api.client().invoices.retrieve(INVOICE_ID));
+  assert.ok(error instanceof NotFoundError);
+  assert.ok(error instanceof InvalidRequestError);
+  assert.equal(error.code, "INVOICE_NOT_FOUND");
+  assert.equal(error.message, "No encontramos esa factura.");
+  assert.equal(error.data, null);
+  assert.equal(error.requestId, "req_test00000000000000000001");
+  assert.equal(api.requests.length, 1);
+});
+
+test("invoices.list con todos los filtros, en el orden del contrato", async () => {
+  const api = new MockAPI();
+  api.add(200, INVOICE_LIST);
+  const page = await api.client().invoices.list({
+    cursor: "c1",
+    limit: 50,
+    created_lt: "2026-12-01T00:00:00-03:00",
+    created_gte: new Date("2026-11-01T03:00:00Z"),
+    status: "issued",
+  });
+  assert.equal(page.constructor, ListObject);
+  assert.deepEqual(
+    [...page].map((invoice) => invoice.constructor),
+    [Invoice, Invoice],
+  );
+  assert.deepEqual(
+    page.data.map((invoice) => invoice.status),
+    ["rejected", "issued"],
+  );
+  assert.equal(page.has_more, true);
+  assert.equal(page.next_cursor, INVOICE_LIST.next_cursor);
+  const request = api.last;
+  assert.deepEqual([request.method, request.url.pathname], ["GET", "/v1/invoices"]);
+  assert.equal(request.body, undefined);
+  assert.equal(request.headers.get("idempotency-key"), null);
+  // status, created_gte, created_lt, limit y cursor: el orden de la API.
+  assert.equal(
+    request.url.search,
+    "?status=issued&created_gte=2026-11-01T03%3A00%3A00.000Z" +
+      "&created_lt=2026-12-01T00%3A00%3A00-03%3A00&limit=50&cursor=c1",
+  );
+});
+
+test("invoices.list sin filtros pide la URL pelada", async () => {
+  const api = new MockAPI();
+  api.add(200, { ...INVOICE_LIST, has_more: false, next_cursor: null });
+  await api.client().invoices.list();
+  assert.equal(api.last.url.href, INVOICES_URL);
+  api.add(200, { ...INVOICE_LIST, has_more: false, next_cursor: null });
+  await api.client().invoices.list({ status: null, limit: undefined });
+  assert.equal(api.last.url.href, INVOICES_URL);
+});
+
+const INVOICE_LIST_NAMES = "status, created_gte, created_lt, limit y cursor";
+
+const INVOICE_LIST_INVALID: Array<[string, unknown, typeof TypeError | typeof RangeError, string]> =
+  [
+    [
+      "dni, que iría en la URL (es un dato personal)",
+      { dni: INVOICE_DNI },
+      TypeError,
+      `invoices.list no acepta "dni": los parámetros son ${INVOICE_LIST_NAMES}.`,
+    ],
+    [
+      "direction, que es de las transferencias",
+      { direction: "inbound" },
+      TypeError,
+      `invoices.list no acepta "direction": los parámetros son ${INVOICE_LIST_NAMES}.`,
+    ],
+    [
+      "params que no son un objeto",
+      "issued",
+      TypeError,
+      `invoices.list recibe un objeto con sus parámetros (${INVOICE_LIST_NAMES}).`,
+    ],
+    ["limit con decimales", { limit: 1.5 }, TypeError, "limit no acepta un número con decimales."],
+    ["un boolean", { status: true }, TypeError, "status no puede ser un boolean."],
+    [
+      "un Date inválido",
+      { created_lt: new Date("x") },
+      RangeError,
+      "created_lt es una fecha inválida.",
+    ],
+  ];
+
+for (const [label, params, ErrorType, message] of INVOICE_LIST_INVALID) {
+  test(`invoices.list valida antes de mandar: ${label}`, async () => {
+    const api = new MockAPI();
+    // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+    const untyped = api.client().invoices as any;
+    const error = await rejection(untyped.list(params));
+    assert.equal(error.constructor, ErrorType);
+    assert.equal(error.message, message);
+    assert.deepEqual(api.requests, []);
+  });
+}
+
+test("invoices: los GET no llevan Idempotency-Key", async () => {
+  const api = new MockAPI();
+  // biome-ignore lint/suspicious/noExplicitAny: lo que haría alguien desde JavaScript.
+  const untyped = api.client().invoices as any;
+  for (const call of [
+    () => untyped.retrieve(INVOICE_ID, { idempotencyKey: "k" }),
+    () => untyped.list({ status: "issued" }, { idempotencyKey: "k" }),
+  ]) {
+    const error = await rejection(call());
+    assert.ok(error instanceof RangeError);
+    assert.equal(error.message, "La Idempotency-Key solo va en los POST.");
+  }
+  assert.deepEqual(api.requests, []);
 });
 
 // --- Sandbox: test helpers --------------------------------------------------------------------
